@@ -49,3 +49,11 @@ Run it:
 ```
 /bin/bash ./02_docker_setup.sh
 ```
+
+03 Back on the manager machine
+
+```
+ssh ...
+docker service ls
+docker node ls
+```
