@@ -19,13 +19,6 @@
 #   LAN_IP=192.168.0.1
 # Run it: /bin/bash ./01_user_firewall_etc.sh
 
-USER_PASSWORD=
-CANARYTOKEN_URL=
-SWAP_SIZE=2G
-SSH_PORT=33003
-ENCRYPTED_PRIVATE=N
-LAN_IP=
-
 echo 'Checking variables...'
 
 # What PASSWORD for new 'deploy' user?
