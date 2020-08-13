@@ -8,17 +8,17 @@ wget -O 01_user_firewall_etc.sh https://raw.githubusercontent.com/turgs/rstar_ma
 Set variables:
 
 ```
-USER_PASSWORD=changeme
-CANARYTOKEN_URL=changeme
-LAN_IP=changeme
+export USER_PASSWORD=changeme
+export CANARYTOKEN_URL=changeme
+export LAN_IP=changeme
 ```
 
 And, optionally:
 
 ```
-SWAP_SIZE=2G
-SSH_PORT=22
-ENCRYPTED_PRIVATE=Y
+export SWAP_SIZE=2G
+export SSH_PORT=22
+export ENCRYPTED_PRIVATE=Y
 ```
 
 Run it:
