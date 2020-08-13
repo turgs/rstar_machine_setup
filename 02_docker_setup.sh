@@ -22,8 +22,8 @@ echo ""
 sudo apt-get -y install curl apt-transport-https ca-certificates software-properties-common
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add 
 sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"
-sudo apt-get -y udpate
-sudo apt -get -y install docker-ce docker-ce-cli containerd.io
+sudo apt-get -y update
+sudo apt-get -y install docker-ce docker-ce-cli containerd.io
 docker --version
 
 # Allow user to not need sudo to run docker commands
@@ -54,4 +54,5 @@ sudo wget -O /usr/local/bin/ufw-docker \
   https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
 chmod +x /usr/local/bin/ufw-docker
 ufw-docker install
+sudo systemctl restart ufw
 
