@@ -29,7 +29,7 @@ LAN_IP=
 echo 'Checking variables...'
 
 # What PASSWORD for new 'deploy' user?
-echo ' * USER_PASSWORD'
+echo " * USER_PASSWORD... ${USER_PASSWORD}"
 if [[ -z "${USER_PASSWORD}" ]]; then
   echo -e "      Exiting.\n\n"
   exit
