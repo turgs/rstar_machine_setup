@@ -27,7 +27,7 @@ export ENCRYPTED_PRIVATE=Y
 Run it:
 
 ```
-/bin/bash /tmp/01_user_firewall_etc.sh
+bash /tmp/01_user_firewall_etc.sh
 sudo reboot
 ```
 
@@ -47,7 +47,7 @@ export JOIN_COMMAND=changeme
 Run it:
 
 ```
-/bin/bash /tmp/02_docker_setup.sh
+sudo bash /tmp/02_docker_setup.sh
 ```
 
 03 Back on the manager machine
