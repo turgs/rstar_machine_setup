@@ -42,7 +42,7 @@ else
     echo "-----------------"
     echo "CREATING SWARM"
     echo ""
-    LAN_IP=sudo grep '# Enabling LAN IP for Binary Lane: ' /etc/network/interfaces | sed 's/# Enabling LAN IP for Binary Lane: //'
+    LAN_IP=$(sudo grep '# Enabling LAN IP for Binary Lane: ' /etc/network/interfaces | sed 's/# Enabling LAN IP for Binary Lane: //')
     docker swarm init --advertise-addr $LAN_IP
 fi
 
