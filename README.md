@@ -33,12 +33,12 @@ sudo reboot
 
 ### 02 Adding to Docker Swarm, or creating new
 
-ull the file onto the new server:
+Pull the file onto the new server:
 
 ```
 curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/02_docker_setup.sh > 02_docker_setup.sh
 ```
-Set variables:
+optional variable if joining an existing swarm:
 
 ```
 export JOIN_COMMAND=changeme
