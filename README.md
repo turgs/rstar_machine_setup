@@ -5,7 +5,7 @@
 Pull the file onto the new server:
 
 ```
-curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/01_user_firewall_etc.sh > ~/tmp/01_user_firewall_etc.sh
+curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/01_user_firewall_etc.sh > /tmp/01_user_firewall_etc.sh
 ```
 Set variables:
 
@@ -27,7 +27,7 @@ export ENCRYPTED_PRIVATE=Y
 Run it:
 
 ```
-/bin/bash ./01_user_firewall_etc.sh
+/bin/bash /tmp/01_user_firewall_etc.sh
 sudo reboot
 ```
 
@@ -36,7 +36,7 @@ sudo reboot
 Pull the file onto the new server:
 
 ```
-curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/02_docker_setup.sh > ~/tmp/02_docker_setup.sh
+curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/02_docker_setup.sh > /tmp/02_docker_setup.sh
 ```
 optional variable if joining an existing swarm:
 
@@ -47,7 +47,7 @@ export JOIN_COMMAND=changeme
 Run it:
 
 ```
-/bin/bash ./02_docker_setup.sh
+/bin/bash /tmp/02_docker_setup.sh
 ```
 
 03 Back on the manager machine
