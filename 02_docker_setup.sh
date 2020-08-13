@@ -36,7 +36,7 @@ if [[ ! -z "$JOIN_COMMAND" ]]; then
     echo "-----------------"
     echo "JOINING SWARM"
     echo ""
-    $JOIN_COMMAND
+    sudo $JOIN_COMMAND
 else
     echo ""
     echo "-----------------"
