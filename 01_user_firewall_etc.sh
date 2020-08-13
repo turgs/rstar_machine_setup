@@ -119,7 +119,7 @@ echo "UBUNTU ADVANTAGE LIVEPATCH"
 echo ""
 
 if [[ ! -z "$UBUNTU_LIVEPATCH_TOKEN" ]]; then
-  sudo ua attach $UBUNTU_LIVEPATCH_TOKEN
+  sudo ua enable-livepatch $UBUNTU_LIVEPATCH_TOKEN
   sudo ua status
 fi
 
