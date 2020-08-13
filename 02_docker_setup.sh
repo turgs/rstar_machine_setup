@@ -39,7 +39,7 @@ sudo apt-get -y install docker-ce docker-ce-cli containerd.io
 docker --version
 
 # Allow user to not need sudo to run docker commands
-#sudo usermod -aG docker deploy
+sudo usermod -aG docker deploy
 
 
 
