@@ -5,7 +5,7 @@
 Pull the file onto the new server:
 
 ```
-curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/01_user_firewall_etc.sh > 01_user_firewall_etc.sh
+curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/01_user_firewall_etc.sh > ~/tmp/01_user_firewall_etc.sh
 ```
 Set variables:
 
@@ -36,7 +36,7 @@ sudo reboot
 Pull the file onto the new server:
 
 ```
-curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/02_docker_setup.sh > 02_docker_setup.sh
+curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/02_docker_setup.sh > ~/tmp/02_docker_setup.sh
 ```
 optional variable if joining an existing swarm:
 
