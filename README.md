@@ -3,7 +3,7 @@
 Pull the file onto the new server:
 
 ```
-wget -O 01_user_firewall_etc.sh https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/01_user_firewall_etc.sh
+curl https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/01_user_firewall_etc.sh > 01_user_firewall_etc.sh
 ```
 Set variables:
 
