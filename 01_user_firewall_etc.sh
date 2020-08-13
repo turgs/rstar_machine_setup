@@ -120,6 +120,7 @@ echo "UBUNTU ADVANTAGE LIVEPATCH"
 echo ""
 
 if [[ ! -z "$UBUNTU_LIVEPATCH_TOKEN" ]]; then
+  sudo apt-get -y install snapd
   sudo snap install canonical-livepatch
   sudo canonical-livepatch enable $UBUNTU_LIVEPATCH_TOKEN
   sudo ua status
