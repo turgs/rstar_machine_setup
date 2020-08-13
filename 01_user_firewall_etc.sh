@@ -107,9 +107,9 @@ echo ""
 
 # updates
 export DEBIAN_FRONTEND=noninteractive
-apt-get -y update
+apt-get -yq update
 apt-get -yq --with-new-pkgs upgrade
-apt-get autoremove
+apt-get -yq autoremove
 clear
 
 
