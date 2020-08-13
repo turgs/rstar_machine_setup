@@ -11,6 +11,7 @@ Set variables:
 export USER_PASSWORD=changeme
 export CANARYTOKEN_URL=changeme
 export LAN_IP=changeme
+export UBUNTU_LIVEPATCH_TOKEN=changeme
 ```
 
 And, optionally:
