@@ -101,6 +101,7 @@ echo ''
 
 
 echo ""
+echo ""
 echo "-----------------"
 echo "UPDATES AND UPGRADES"
 echo ""
@@ -110,9 +111,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get -yq update
 apt-get -yq --with-new-pkgs upgrade
 apt-get -yq autoremove
-clear
 
 
+echo ""
 echo ""
 echo "-----------------"
 echo "UBUNTU ADVANTAGE LIVEPATCH"
@@ -125,6 +126,7 @@ fi
 
 
 
+echo ""
 echo ""
 echo "-----------------"
 echo "UNATTENDED UPGRADES"
@@ -146,6 +148,7 @@ EOF
 
 
 echo ""
+echo ""
 echo "-----------------"
 echo "SET TIMEZONE TO UTC"
 echo ""
@@ -155,6 +158,7 @@ echo ""
 timedatectl set-timezone UTC
 
 
+echo ""
 echo ""
 echo "-----------------"
 echo "SET FIREWALL"
@@ -176,6 +180,7 @@ sudo /etc/init.d/rsyslog restart
 
 
 echo ""
+echo ""
 echo "-----------------"
 echo "CHANGE SSH PORT TO $SSH_PORT"
 echo ""
@@ -189,10 +194,10 @@ sudo systemctl restart sshd
 
 
 echo ""
+echo ""
 echo "-----------------"
 echo "CREATING SWAP: $SWAP_SIZE"
 echo ""
-
 
 # create swap
 fallocate -l $SWAP_SIZE /swapfile
@@ -209,6 +214,7 @@ echo "vm.overcommit_memory=1" >> /etc/sysctl.conf # needed for redis
 # enabling LAN IP
 if [[ ! -z "$LAN_IP" ]]; then
   echo ""
+  echo ""
   echo "-----------------"
   echo "ENABLING LAN_IP"
   echo ""
@@ -224,11 +230,11 @@ netmask 255.255.0.0
 # gateway $LAN_IP1.$LAN_IP2.$LAN_IP3.1
 EOF
   systemctl restart network
-
 fi
 
 
 
+echo ""
 echo ""
 echo "-----------------"
 echo "CREATING USER 'deploy'"
@@ -248,6 +254,7 @@ usermod -aG sudo deploy
 
 
 echo ""
+echo ""
 echo "-----------------"
 echo "ADD CANARY-TOKEN TO REBOOT CRON"
 echo ""
@@ -262,12 +269,13 @@ sudo sh -c 'chmod +x /etc/cron.d/reboot_canary'
 
 
 echo ""
+echo ""
 echo "-----------------"
 echo "FAIL2BAN"
 echo ""
 
 # fail2ban
-apt-get -y install fail2ban
+apt-get -yq install fail2ban
 
 # create local config
 ####################################################################
@@ -303,6 +311,7 @@ service fail2ban restart
 if [[ $ENCRYPTED_PRIVATE == 'Y' ]]; then
   clear
 
+  echo ""
   echo ""
   echo "-----------------"
   echo "CREATE ENCRYPTED VOLUME"
@@ -360,6 +369,7 @@ fi
 
 
 
+echo ""
 echo ""
 echo "-----------------"
 echo "DONE. TAKE A IMAGE BACKUP NOW."
