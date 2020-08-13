@@ -16,6 +16,18 @@ fi
 
 echo ""
 echo "-----------------"
+echo "ADD FIREWALL RULES FOR DOCKER SWARM"
+echo ""
+
+sudo ufw allow 2377/tcp # comms from worker nodes to manager in swarm
+sudo ufw allow 7946     # comms among nodes for network discovery
+sudo ufw allow 4789/udp # overlay network traffic
+sudo ufw reload
+
+
+
+echo ""
+echo "-----------------"
 echo "DOCKER"
 echo ""
 
