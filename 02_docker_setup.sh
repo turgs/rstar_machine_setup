@@ -60,3 +60,39 @@ fi
 
 
 
+echo ""
+echo "-------------"
+echo "TRAEFIC_ACME.md"
+sudo touch /etc/traefik_acme.json
+sudo chmod 600 /etc/traefik_acme.json
+
+
+echo ""
+echo "--------------"
+echo "DEPLOY DOCKER SECRETS"
+
+docker secret remove postgres_password
+docker secret remove rails_secret_key_base
+docker secret remove rails_secret_token
+docker secret remove api_key_bugsnag
+docker secret remove api_key_postmark
+docker secret remove api_key_skylight
+docker secret remove api_key_papertrail_host
+docker secret remove api_key_papertrail_port
+docker secret remove postgres_password.v20200417a
+docker secret remove rails_secret_key_base.v20200417a
+docker secret remove rails_secret_token.v20200417a
+docker secret remove api_key_bugsnag.v20200417a
+docker secret remove api_key_postmark.v20200417a
+docker secret remove api_key_skylight.v20200417a
+docker secret remove api_key_papertrail_host.v20200417a
+docker secret remove api_key_papertrail_port.v20200417a
+echo "${{ secrets.DEPLOY_POSTGRES_PASSWORD }}"       | docker secret create postgres_password.v20200417a -
+echo "${{ secrets.DEPLOY_RAILS_SECRET_KEY_BASE }}"   | docker secret create rails_secret_key_base.v20200417a -
+echo "${{ secrets.DEPLOY_RAILS_SECRET_TOKEN }}"      | docker secret create rails_secret_token.v20200417a -
+echo "${{ secrets.DEPLOY_API_KEY_BUGSNAG }}"         | docker secret create api_key_bugsnag.v20200417a -
+echo "${{ secrets.DEPLOY_API_KEY_POSTMARK }}"        | docker secret create api_key_postmark.v20200417a -
+echo "${{ secrets.DEPLOY_API_KEY_SKYLIGHT }}"        | docker secret create api_key_skylight.v20200417a -
+echo "${{ secrets.DEPLOY_API_KEY_PAPERTRAIL_HOST }}" | docker secret create api_key_papertrail_host.v20200417a -
+echo "${{ secrets.DEPLOY_API_KEY_PAPERTRAIL_PORT }}" | docker secret create api_key_papertrail_port.v20200417a -
+
