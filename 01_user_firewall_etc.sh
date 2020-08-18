@@ -175,6 +175,7 @@ ufw default allow outgoing
 ufw allow $SSH_PORT
 sudo ufw allow 443
 sudo ufw allow 80
+sudo ufw allow from $MANAGER_LAN_IP to any port 5432
 # log to own file /var/log/ufw.log, not /var/log/syslog, then restart rsyslog
 sudo sh -c 'echo "& stop" >> /etc/rsyslog.d/20-ufw.conf'
 sudo /etc/init.d/rsyslog restart
