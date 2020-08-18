@@ -96,3 +96,13 @@ echo "${{ secrets.DEPLOY_API_KEY_SKYLIGHT }}"        | docker secret create api_
 echo "${{ secrets.DEPLOY_API_KEY_PAPERTRAIL_HOST }}" | docker secret create api_key_papertrail_host.v20200417a -
 echo "${{ secrets.DEPLOY_API_KEY_PAPERTRAIL_PORT }}" | docker secret create api_key_papertrail_port.v20200417a -
 
+
+
+
+
+echo ""
+echo "--------------"
+echo "DAILY CRON DOCKER PRUNE"
+
+sudo sh -c 'echo "7 14 * * * root docker docker system prune -f" >> /etc/cron.d/docker_system_prune'
+sudo sh -c 'chmod +x /etc/cron.d/docker_system_prune'
