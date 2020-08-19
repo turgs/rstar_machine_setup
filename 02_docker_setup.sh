@@ -22,6 +22,7 @@ echo ""
 sudo ufw allow 2377/tcp # comms from worker nodes to manager in swarm
 sudo ufw allow 7946     # comms among nodes for network discovery
 sudo ufw allow 4789/udp # overlay network traffic
+sudo ufw allow from any to any proto esp # Protocol 50 (ESP) if you plan on using overlay network with the encryption option
 sudo ufw reload
 
 
