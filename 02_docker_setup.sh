@@ -106,5 +106,5 @@ echo ""
 echo "--------------"
 echo "DAILY CRON DOCKER PRUNE"
 
-sudo sh -c 'echo "7 14 * * * root docker docker system prune -f" >> /etc/cron.d/docker_system_prune'
+sudo sh -c 'echo "7 14 * * * root docker docker system prune -a -f" >> /etc/cron.d/docker_system_prune'
 sudo sh -c 'chmod +x /etc/cron.d/docker_system_prune'
