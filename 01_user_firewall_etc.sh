@@ -231,7 +231,7 @@ address $LAN_IP
 netmask 255.255.0.0
 # gateway $LAN_IP1.$LAN_IP2.$LAN_IP3.1
 EOF
-  systemctl restart network
+  systemctl restart NetworkManager
 fi
 
 
