@@ -370,6 +370,12 @@ fi
 
 
 
+echo fs.inotify.max_user_watches=10000000 | sudo tee -a /etc/sysctl.conf
+sysctl -p
+
+
+
+
 
 echo ""
 echo ""
