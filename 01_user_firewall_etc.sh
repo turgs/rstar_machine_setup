@@ -376,6 +376,9 @@ sysctl -p
 
 
 
+echo 'user_allow_other' > /etc/fuse.conf
+
+
 
 echo ""
 echo ""
