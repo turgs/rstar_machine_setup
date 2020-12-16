@@ -108,3 +108,12 @@ echo "DAILY CRON DOCKER PRUNE"
 
 sudo sh -c 'echo "7 14 * * * root docker docker system prune -a -f" >> /etc/cron.d/docker_system_prune'
 sudo sh -c 'chmod +x /etc/cron.d/docker_system_prune'
+
+
+# add a cron that looks for sshfs volumes listed, but are also no longer connected to a container.
+#... unmount + run docker volume rm...
+
+# add this new node's public SSH key to /root/.ssh/authorized_keys and /home/deploy/.ssh/authorized_keys on	waiter-shallow.bnr.la
+ssh-copy-id -p33003 deploy@172.22.108.48
+ssh-copy-id -p33003 root@172.22.108.48
+
