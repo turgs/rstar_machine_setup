@@ -194,6 +194,17 @@ sed -i -- "s/#Port $SSH_PORT/Port $SSH_PORT/g" /etc/ssh/sshd_config
 sudo systemctl restart sshd
 
 
+cat << EOF > /etc/ssh/ssh_config
+Include /etc/ssh/ssh_config.d/*.conf
+Host *
+  ServerAliveInterval 240
+  ServerAliveCountMax 2
+  StrictHostKeyChecking no
+  UserKnownHostsFile=/dev/null
+LogLevel ERROR
+EOF
+
+
 
 echo ""
 echo ""
