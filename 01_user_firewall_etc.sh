@@ -147,6 +147,13 @@ Unattended-Upgrade::Automatic-Reboot-Time "16:00"; // 2am Brisbane.
 // Acquire::http::Dl-Limit "70"; // limits the download speed to 70kb/sec
 EOF
 
+cat << EOF > /etc/apt/apt.conf.d/20auto-upgrades
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
 
 
 echo ""
