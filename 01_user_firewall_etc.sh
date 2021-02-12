@@ -157,6 +157,15 @@ EOF
 
 
 echo ""
+echo "--------------"
+echo "DAILY CRON APT UPDATES"
+
+sudo sh -c 'echo "0 0 * * * root root (apt-get update && apt-get -y upgrade) > /dev/null" >> /etc/cron.d/apt-get-upgrade'
+sudo sh -c 'chmod +x /etc/cron.d/apt-get-upgrade'
+
+
+
+echo ""
 echo ""
 echo "-----------------"
 echo "SET TIMEZONE TO UTC"
