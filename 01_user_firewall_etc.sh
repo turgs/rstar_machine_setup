@@ -145,6 +145,10 @@ Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-Time "16:00"; // 2am Brisbane.
 // Acquire::http::Dl-Limit "70"; // limits the download speed to 70kb/sec
+Unattended-Upgrade::Allowed-Origins {
+  "${distro_id}:${distro_codename}-security";
+  "${distro_id}:${distro_codename}-updates";
+};
 EOF
 
 cat << EOF > /etc/apt/apt.conf.d/20auto-upgrades
@@ -154,14 +158,6 @@ APT::Periodic::Download-Upgradeable-Packages "1";
 APT::Periodic::AutocleanInterval "7";
 EOF
 
-
-
-echo ""
-echo "--------------"
-echo "DAILY CRON APT UPDATES"
-
-sudo sh -c 'echo "0 0 * * * root root (apt-get update && apt-get -y upgrade) > /dev/null" >> /etc/cron.d/apt-get-upgrade'
-sudo sh -c 'chmod +x /etc/cron.d/apt-get-upgrade'
 
 
 
