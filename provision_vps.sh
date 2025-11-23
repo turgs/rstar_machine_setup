@@ -617,6 +617,10 @@ configure_ssh() {
         cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup-provision
     fi
     
+    # Comment out Port directive in main config to avoid conflicts
+    sed -i 's/^Port /#Port /' /etc/ssh/sshd_config
+    sed -i 's/^#Port 22$/#Port 22/' /etc/ssh/sshd_config
+    
     # Create custom SSH config with better structure
     cat > /etc/ssh/sshd_config.d/99-custom.conf << EOF
 # Custom SSH Configuration for Kamal 2 Deployment
