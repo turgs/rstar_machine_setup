@@ -989,7 +989,7 @@ main() {
     check_ubuntu
     
     # Show banner
-    clear
+    clear 2>/dev/null || true
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
