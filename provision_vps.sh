@@ -409,18 +409,32 @@ update_system() {
     
     log "Updating System Packages"
     
-    echo "Running apt-get update..."
-    apt-get -yq update > /dev/null
+    echo "Running apt-get update (this may take 1-2 minutes)..."
+    if ! apt-get -yq update > /dev/null 2>&1; then
+        error "apt-get update failed"
+    fi
+    echo "✓ Package lists updated"
     
-    echo "Running apt-get upgrade..."
-    apt-get -yq --with-new-pkgs upgrade > /dev/null
+    echo "Running apt-get upgrade (this may take several minutes)..."
+    if ! apt-get -yq --with-new-pkgs upgrade > /dev/null 2>&1; then
+        error "apt-get upgrade failed"
+    fi
+    echo "✓ System packages upgraded"
     
     echo "Running apt-get autoremove..."
-    apt-get -yq autoremove > /dev/null
+    if ! apt-get -yq autoremove > /dev/null 2>&1; then
+        error "apt-get autoremove failed"
+    fi
+    echo "✓ Unused packages removed"
     
     # Install essential tools
-    echo "Installing essential tools..."
-    apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release
+    echo "Installing essential tools (this may take a minute)..."
+    if ! apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release > /tmp/apt-install.log 2>&1; then
+        echo "ERROR: Failed to install essential tools"
+        cat /tmp/apt-install.log
+        error "Essential tools installation failed"
+    fi
+    echo "✓ Essential tools installed"
     
     mark_complete "update_system"
     echo "✓ System updated"
