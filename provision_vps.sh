@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Set TERM if not set (for non-interactive SSH sessions)
+export TERM="${TERM:-dumb}"
+export DEBIAN_FRONTEND=noninteractive
+
 #==============================================================================
 # CONFIGURATION DEFAULTS
 #==============================================================================
@@ -231,7 +235,6 @@ update_system() {
     
     log "Updating System Packages"
     
-    export DEBIAN_FRONTEND=noninteractive
     apt-get -yq update
     apt-get -yq --with-new-pkgs upgrade
     apt-get -yq autoremove

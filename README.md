@@ -186,7 +186,7 @@ https://gist.github.com/turgs/6d471a01fa901146c0ed9e2138f7c902
 ### Format
 One IP per line (optional: add SSH key on any line starting with `ssh-`):
 ```txt
-167.179.190.211                          # Tim's AussieBB dynamic IP
+167.179.190.200                          # Tim's home dynamic IP
 101.234.56.89                            # Office - Static IP
 192.168.1.0/24                           # Office LAN
 172.22.108.48                            # waiter-shallow.bnr.la
