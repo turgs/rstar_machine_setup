@@ -419,28 +419,47 @@ update_system() {
     log "Updating System Packages"
     
     echo "Running apt-get update (this may take 1-2 minutes)..."
-    if ! apt-get -yq update > /dev/null 2>&1; then
+    local APT_OUTPUT
+    if ! APT_OUTPUT=$(apt-get -yq update 2>&1); then
+        echo ""
+        echo "ERROR: apt-get update failed with output:"
+        echo "----------------------------------------"
+        echo "$APT_OUTPUT"
+        echo "----------------------------------------"
         error "apt-get update failed"
     fi
     echo "✓ Package lists updated"
     
     echo "Running apt-get upgrade (this may take several minutes)..."
-    if ! apt-get -yq --with-new-pkgs upgrade > /dev/null 2>&1; then
+    if ! APT_OUTPUT=$(apt-get -yq --with-new-pkgs upgrade 2>&1); then
+        echo ""
+        echo "ERROR: apt-get upgrade failed with output:"
+        echo "----------------------------------------"
+        echo "$APT_OUTPUT"
+        echo "----------------------------------------"
         error "apt-get upgrade failed"
     fi
     echo "✓ System packages upgraded"
     
     echo "Running apt-get autoremove..."
-    if ! apt-get -yq autoremove > /dev/null 2>&1; then
-        error "apt-get autoremove failed"
+    if ! APT_OUTPUT=$(apt-get -yq autoremove 2>&1); then
+        echo ""
+        echo "WARNING: apt-get autoremove failed with output:"
+        echo "----------------------------------------"
+        echo "$APT_OUTPUT"
+        echo "----------------------------------------"
+        echo "⚠ Continuing anyway..."
     fi
     echo "✓ Unused packages removed"
     
     # Install essential tools
     echo "Installing essential tools (this may take a minute)..."
-    if ! apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release > /tmp/apt-install.log 2>&1; then
-        echo "ERROR: Failed to install essential tools"
-        cat /tmp/apt-install.log
+    if ! APT_OUTPUT=$(apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release 2>&1); then
+        echo ""
+        echo "ERROR: Failed to install essential tools with output:"
+        echo "----------------------------------------"
+        echo "$APT_OUTPUT"
+        echo "----------------------------------------"
         error "Essential tools installation failed"
     fi
     echo "✓ Essential tools installed"
@@ -896,7 +915,10 @@ configure_unattended_upgrades() {
     
     [[ "$ENABLE_UNATTENDED_UPGRADES" != "true" ]] && { echo "⚠ Unattended upgrades disabled, skipping"; mark_complete "configure_unattended_upgrades"; return; }
     
-    apt-get -yq install unattended-upgrades
+    echo "Installing unattended-upgrades package..."
+    if ! apt-get -yq install unattended-upgrades 2>&1; then
+        echo "⚠ Warning: Failed to install unattended-upgrades (continuing anyway)"
+    fi
     
     # Configure automatic updates
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << EOF
@@ -998,7 +1020,9 @@ install_docker() {
     # Ensure jq is available for Docker daemon.json validation later
     if ! command -v jq &>/dev/null; then
         echo "Installing jq for JSON validation..."
-        apt-get -yq install jq > /dev/null
+        if ! apt-get -yq install jq 2>&1 | grep -v "^Selecting\|^Preparing\|^Unpacking\|^Setting up"; then
+            echo "⚠ Warning: Failed to install jq"
+        fi
     fi
     
     # Check disk space (Docker needs ~500MB minimum)
@@ -1155,7 +1179,14 @@ setup_ubuntu_livepatch() {
     
     [[ -z "$UBUNTU_LIVEPATCH_TOKEN" ]] && { echo "⚠ No Livepatch token provided, skipping"; mark_complete "setup_ubuntu_livepatch"; return; }
     
-    apt-get -yq install snapd > /dev/null
+    echo "Installing snapd..."
+    if ! apt-get -yq install snapd 2>&1 | grep -v "^Selecting\|^Preparing\|^Unpacking\|^Setting up"; then
+        echo "ERROR: Failed to install snapd"
+        mark_complete "setup_ubuntu_livepatch"
+        return
+    fi
+    
+    echo "Installing canonical-livepatch..."
     snap install canonical-livepatch
     canonical-livepatch enable "$UBUNTU_LIVEPATCH_TOKEN"
     
