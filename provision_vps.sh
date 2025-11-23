@@ -1562,12 +1562,23 @@ main() {
     check_root
     check_ubuntu
     
-    # Show banner
+    # Show banner with commit info
     clear 2>/dev/null || true
-    cat << 'EOF'
+    
+    # Get commit SHA if available
+    SCRIPT_VERSION="unknown"
+    if [[ -d "$(dirname "${BASH_SOURCE[0]}")/.git" ]]; then
+        SCRIPT_VERSION=$(cd "$(dirname "${BASH_SOURCE[0]}")" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    elif command -v curl &>/dev/null; then
+        # Try to get latest commit from GitHub
+        SCRIPT_VERSION=$(curl -fsSL "https://api.github.com/repos/turgs/rstar_machine_setup/commits/master" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | cut -c1-7 || echo "unknown")
+    fi
+    
+    cat << EOF
 ╔════════════════════════════════════════════════╗
 ║                                                ║
 ║   Ubuntu VPS Provisioning Script for Kamal 2   ║
+║   Version: ${SCRIPT_VERSION}$(printf '%*s' $((37 - ${#SCRIPT_VERSION})) '')║
 ║                                                ║
 ╚════════════════════════════════════════════════╝
 EOF
