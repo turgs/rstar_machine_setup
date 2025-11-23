@@ -15,6 +15,34 @@ set -euo pipefail
 export TERM="${TERM:-dumb}"
 export DEBIAN_FRONTEND=noninteractive
 
+# Error handler
+error_handler() {
+    local line_no=$1
+    local exit_code=$?
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "❌ SCRIPT FAILED at line $line_no (exit code: $exit_code)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    [[ -f "$STATE_FILE" ]] && echo "Last completed steps are in: $STATE_FILE"
+    echo "Check logs: journalctl -xe"
+    echo ""
+    echo "For support, provide:"
+    echo "  1. This error output"
+    echo "  2. Contents of $STATE_FILE"
+    echo "  3. Output of: journalctl -xe | tail -50"
+    echo ""
+    exit 1
+}
+
+trap 'error_handler ${LINENO}' ERR
+
+# Cleanup temporary files on exit
+cleanup() {
+    rm -f /tmp/get-docker.sh 2>/dev/null || true
+}
+trap cleanup EXIT
+
 #==============================================================================
 # CONFIGURATION DEFAULTS
 #==============================================================================
@@ -196,33 +224,179 @@ check_ubuntu() {
     fi
 }
 
+check_service() {
+    local service=$1
+    systemctl is-active --quiet "$service" 2>/dev/null
+}
+
+validate_ip() {
+    local ip=$1
+    [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]] || return 1
+    # Validate each octet is 0-255
+    local IFS='./'
+    local parts=($ip)
+    for part in "${parts[@]:0:4}"; do
+        [[ $part =~ ^[0-9]+$ ]] && [[ $part -le 255 ]] || return 1
+    done
+    return 0
+}
+
+fetch_from_gist() {
+    local url=$1
+    local pattern=$2
+    if [[ -n "$url" ]]; then
+        curl -fsSL --max-time 10 "$url" 2>/dev/null | grep -E "$pattern" | head -1 || true
+    fi
+}
+
 generate_password() {
     # Generate a strong 32-character password
-    tr -dc 'A-Za-z0-9!@#$%^&*' < /dev/urandom | head -c 32
+    if command -v openssl &>/dev/null; then
+        openssl rand -base64 24 | head -c 32
+    elif [[ -e /dev/urandom ]]; then
+        tr -dc 'A-Za-z0-9!@#$%^&*' < /dev/urandom | head -c 32
+    else
+        # Fallback to timestamp + random (less secure but functional)
+        echo "${RANDOM}${RANDOM}$(date +%s%N)" | sha256sum | cut -d' ' -f1 | head -c 32
+    fi
 }
 
 #==============================================================================
 # MAIN PROVISIONING FUNCTIONS
 #==============================================================================
 
+preflight_checks() {
+    log "Running Pre-flight Checks"
+    
+    # Check disk space (need at least 2GB free for swap + Docker)
+    local AVAILABLE_GB
+    AVAILABLE_GB=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
+    if [[ $AVAILABLE_GB -lt 2 ]]; then
+        error "Insufficient disk space: ${AVAILABLE_GB}GB available, need at least 2GB"
+    fi
+    echo "✓ Disk space: ${AVAILABLE_GB}GB available"
+    
+    # Check network connectivity and DNS in parallel
+    local NET_OK=0 DNS_OK=0
+    
+    # Run network check in background and capture result
+    ping -c 1 -W 3 8.8.8.8 &>/dev/null &
+    local PID_NET=$!
+    
+    # Run DNS check in background and capture result
+    (host github.com &>/dev/null || nslookup github.com &>/dev/null) &
+    local PID_DNS=$!
+    
+    # Wait for results and capture exit codes
+    wait $PID_NET && NET_OK=1 || NET_OK=0
+    wait $PID_DNS && DNS_OK=1 || DNS_OK=0
+    
+    [[ $NET_OK -eq 0 ]] && error "No network connectivity detected"
+    echo "✓ Network connectivity verified"
+    
+    [[ $DNS_OK -eq 0 ]] && error "DNS resolution not working"
+    echo "✓ DNS resolution working"
+    
+    # Check if apt is locked (common on fresh VPS instances)
+    local APT_WAIT=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        if [[ $APT_WAIT -ge 300 ]]; then
+            error "apt/dpkg locked for >5 minutes. Kill blocking process or wait longer."
+        fi
+        [[ $APT_WAIT -eq 0 ]] && echo "⚠ Waiting for apt/dpkg lock (unattended-upgrades may be running)..."
+        sleep 10
+        APT_WAIT=$((APT_WAIT + 10))
+    done
+    echo "✓ Package manager available"
+    
+    # Check if running in a container (not supported)
+    if grep -q docker /proc/1/cgroup 2>/dev/null || [[ -f /.dockerenv ]]; then
+        error "Cannot run inside a Docker container"
+    fi
+    echo "✓ Not running in container"
+}
+
 validate_inputs() {
     log "Validating Inputs"
+    
+    # Validate SSH port (1-65535, not privileged unless necessary)
+    if ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || [[ $SSH_PORT -lt 1 ]] || [[ $SSH_PORT -gt 65535 ]]; then
+        error "Invalid SSH port: $SSH_PORT (must be 1-65535)"
+    fi
+    [[ $SSH_PORT -eq 22 ]] && echo "⚠ Warning: Using default SSH port 22 (consider custom port for security)"
+    
+    # Warn about common service ports
+    case $SSH_PORT in
+        80|443|8080|3000|3306|5432) echo "⚠ Warning: Port $SSH_PORT commonly used by other services" ;;
+    esac
+    
+    # Check if port already in use by another service
+    if ss -tlnp | grep -q ":$SSH_PORT " && ! ss -tlnp | grep -q ":$SSH_PORT .*sshd"; then
+        error "Port $SSH_PORT already in use by another service"
+    fi
+    echo "✓ SSH port: $SSH_PORT (available)"
+    
+    # Validate deploy user
+    if ! [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        error "Invalid username: $DEPLOY_USER (must start with letter/underscore, contain only lowercase, digits, hyphens)"
+    fi
+    echo "✓ Deploy user: $DEPLOY_USER"
+    
+    # Validate UID not in use (unless by existing deploy user)
+    if getent passwd "$DEPLOY_UID" &>/dev/null; then
+        local EXISTING_USER
+        EXISTING_USER=$(getent passwd "$DEPLOY_UID" | cut -d: -f1)
+        if [[ "$EXISTING_USER" != "$DEPLOY_USER" ]]; then
+            error "UID $DEPLOY_UID already in use by user: $EXISTING_USER"
+        fi
+    fi
+    echo "✓ Deploy UID: $DEPLOY_UID (available)"
+    
+    # Validate swap size format and disk space
+    if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GM]$ ]]; then
+        error "Invalid swap size format: $SWAP_SIZE (use: 2G or 2048M)"
+    fi
+    echo "✓ Swap size: $SWAP_SIZE"
+    
+    # Validate timezone
+    if ! timedatectl list-timezones | grep -qx "$TIMEZONE"; then
+        error "Invalid timezone: $TIMEZONE (use: timedatectl list-timezones)"
+    fi
+    echo "✓ Timezone: $TIMEZONE"
     
     # Validate SSH key format if provided
     if [[ -n "$SSH_PUBLIC_KEY" ]]; then
         if ! echo "$SSH_PUBLIC_KEY" | grep -qE '^(ssh-rsa|ssh-ed25519|ecdsa-sha2-)'; then
             error "Invalid SSH public key format"
         fi
+        # Validate key has 3 parts (type, key, optional comment)
+        local KEY_PARTS
+        KEY_PARTS=$(echo "$SSH_PUBLIC_KEY" | awk '{print NF}')
+        if [[ $KEY_PARTS -lt 2 ]]; then
+            error "Malformed SSH key (missing components)"
+        fi
         echo "✓ SSH public key validated"
     else
         echo "⚠ No SSH key provided - will check Gist or use provider key"
     fi
     
-    echo "✓ SSH port: $SSH_PORT"
-    echo "✓ Deploy user: $DEPLOY_USER"
-    echo "✓ Swap size: $SWAP_SIZE"
+    # Validate LAN IP format if provided
+    if [[ -n "$LAN_IP" ]]; then
+        if ! validate_ip "$LAN_IP"; then
+            error "Invalid LAN IP format: $LAN_IP"
+        fi
+    fi
+    
+    # Test Gist URL accessibility if provided
+    if [[ -n "$FAIL2BAN_WHITELIST_URL" ]]; then
+        if ! curl -fsSL --max-time 5 "$FAIL2BAN_WHITELIST_URL" &>/dev/null; then
+            echo "⚠ Warning: Cannot reach whitelist Gist URL (will use localhost only)"
+        else
+            echo "✓ IP whitelist Gist: accessible"
+        fi
+    fi
+    
     echo "✓ fail2ban: $ENABLE_FAIL2BAN"
-    [[ -n "$FAIL2BAN_WHITELIST_URL" ]] && echo "✓ IP whitelist: enabled (Gist)"
     [[ -n "$CANARYTOKEN_URL" ]] && echo "✓ CanaryTokens: enabled"
     [[ -n "$UBUNTU_LIVEPATCH_TOKEN" ]] && echo "✓ Livepatch: enabled"
 }
@@ -235,11 +409,17 @@ update_system() {
     
     log "Updating System Packages"
     
-    apt-get -yq update
-    apt-get -yq --with-new-pkgs upgrade
-    apt-get -yq autoremove
+    echo "Running apt-get update..."
+    apt-get -yq update > /dev/null
+    
+    echo "Running apt-get upgrade..."
+    apt-get -yq --with-new-pkgs upgrade > /dev/null
+    
+    echo "Running apt-get autoremove..."
+    apt-get -yq autoremove > /dev/null
     
     # Install essential tools
+    echo "Installing essential tools..."
     apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release
     
     mark_complete "update_system"
@@ -247,13 +427,25 @@ update_system() {
 }
 
 setup_timezone() {
+    if is_complete "setup_timezone"; then
+        echo "⚠ Timezone already configured, skipping"
+        return
+    fi
+    
     log "Setting Timezone to $TIMEZONE"
     
     timedatectl set-timezone "$TIMEZONE"
     echo "✓ Timezone set to $(timedatectl | grep 'Time zone' | awk '{print $3}')"
+    
+    mark_complete "setup_timezone"
 }
 
 create_deploy_user() {
+    if is_complete "create_deploy_user"; then
+        echo "⚠ Deploy user already configured, skipping"
+        return
+    fi
+    
     log "Creating Deploy User: $DEPLOY_USER"
     
     # Check if user already exists
@@ -274,26 +466,50 @@ create_deploy_user() {
     echo "$DEPLOY_USER:$DEPLOY_PASSWORD" | chpasswd
     
     # Add to sudo group
-    usermod -aG sudo "$DEPLOY_USER"
+    if ! usermod -aG sudo "$DEPLOY_USER"; then
+        error "Failed to add $DEPLOY_USER to sudo group"
+    fi
+    
+    # Verify user is in sudo group
+    if ! groups "$DEPLOY_USER" | grep -q sudo; then
+        error "User $DEPLOY_USER not in sudo group after usermod"
+    fi
+    
+    # Save password securely for reference
+    echo "$DEPLOY_PASSWORD" > /root/.${DEPLOY_USER}_password
+    chmod 600 /root/.${DEPLOY_USER}_password
     
     echo "✓ Deploy user configured"
     echo "  Password: $DEPLOY_PASSWORD (save this for emergency sudo access)"
+    echo "  Password also saved to: /root/.${DEPLOY_USER}_password"
+    
+    mark_complete "create_deploy_user"
 }
 
 setup_ssh_keys() {
+    if is_complete "setup_ssh_keys"; then
+        echo "⚠ SSH keys already configured, skipping"
+        return
+    fi
+    
     log "Setting Up SSH Keys"
     
     # If no key provided, try fetching from Gist
     if [[ -z "$SSH_PUBLIC_KEY" ]] && [[ -n "$FAIL2BAN_WHITELIST_URL" ]]; then
         echo "  No SSH key provided, checking Gist..."
-        local GIST_CONTENT
-        GIST_CONTENT=$(curl -fsSL "$FAIL2BAN_WHITELIST_URL" 2>/dev/null || true)
-        
-        # Look for SSH key in Gist (lines starting with ssh-)
-        SSH_PUBLIC_KEY=$(echo "$GIST_CONTENT" | grep -E '^ssh-(rsa|ed25519|ecdsa)' | head -1 || true)
+        SSH_PUBLIC_KEY=$(fetch_from_gist "$FAIL2BAN_WHITELIST_URL" '^ssh-(rsa|ed25519|ecdsa)')
         
         if [[ -n "$SSH_PUBLIC_KEY" ]]; then
-            echo "  ✓ Found SSH key in Gist"
+            # Validate the fetched key has proper format
+            local KEY_PARTS=$(echo "$SSH_PUBLIC_KEY" | awk '{print NF}')
+            if [[ $KEY_PARTS -ge 2 ]]; then
+                echo "  ✓ Found and validated SSH key in Gist"
+            else
+                echo "  ⚠ Found SSH key in Gist but format invalid, ignoring"
+                SSH_PUBLIC_KEY=""
+            fi
+        else
+            echo "  ⚠ No SSH key found in Gist"
         fi
     fi
     
@@ -302,6 +518,7 @@ setup_ssh_keys() {
         if [[ -f "/home/$DEPLOY_USER/.ssh/authorized_keys" ]] && [[ -s "/home/$DEPLOY_USER/.ssh/authorized_keys" ]]; then
             echo "  ⚠ No SSH key provided, but deploy user already has keys"
             echo "  ✓ Using existing SSH key configuration"
+            mark_complete "setup_ssh_keys"
             return
         elif [[ -f "/root/.ssh/authorized_keys" ]] && [[ -s "/root/.ssh/authorized_keys" ]]; then
             echo "  ⚠ No SSH key provided, copying from root (provider added)"
@@ -311,52 +528,52 @@ setup_ssh_keys() {
             chmod 600 "/home/$DEPLOY_USER/.ssh/authorized_keys"
             chown -R "$DEPLOY_USER:$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
             echo "  ✓ Copied SSH keys from root to $DEPLOY_USER"
+            mark_complete "setup_ssh_keys"
             return
         else
             echo "  ⚠ WARNING: No SSH key found!"
             echo "  ⚠ You may lose access after reboot if provider didn't add keys"
             echo "  ⚠ Consider using --no-reboot and adding keys manually"
+            mark_complete "setup_ssh_keys"
             return
         fi
     fi
     
-    # Setup for root
-    mkdir -p /root/.ssh
-    chmod 700 /root/.ssh
+    # Setup SSH directories
+    mkdir -p /root/.ssh "/home/$DEPLOY_USER/.ssh"
+    chmod 700 /root/.ssh "/home/$DEPLOY_USER/.ssh"
     
-    # Add SSH key to root if not already present
-    if ! grep -qF "$SSH_PUBLIC_KEY" /root/.ssh/authorized_keys 2>/dev/null; then
-        echo "$SSH_PUBLIC_KEY" >> /root/.ssh/authorized_keys
-        echo "✓ Added SSH key to root"
-    else
-        echo "⚠ SSH key already in root authorized_keys"
-    fi
-    
-    chmod 600 /root/.ssh/authorized_keys
-    
-    # Setup for deploy user
-    mkdir -p "/home/$DEPLOY_USER/.ssh"
-    
-    # Copy SSH key to deploy user
-    if ! grep -qF "$SSH_PUBLIC_KEY" "/home/$DEPLOY_USER/.ssh/authorized_keys" 2>/dev/null; then
-        echo "$SSH_PUBLIC_KEY" >> "/home/$DEPLOY_USER/.ssh/authorized_keys"
-        echo "✓ Added SSH key to $DEPLOY_USER"
-    else
-        echo "⚠ SSH key already in $DEPLOY_USER authorized_keys"
-    fi
+    # Add SSH key to both root and deploy user
+    for AUTH_FILE in "/root/.ssh/authorized_keys" "/home/$DEPLOY_USER/.ssh/authorized_keys"; do
+        if ! grep -qF "$SSH_PUBLIC_KEY" "$AUTH_FILE" 2>/dev/null; then
+            echo "$SSH_PUBLIC_KEY" >> "$AUTH_FILE"
+            echo "✓ Added SSH key to $(basename $(dirname $(dirname "$AUTH_FILE")))"
+        fi
+        chmod 600 "$AUTH_FILE"
+        
+        # Verify format immediately after adding
+        local INVALID_KEYS=$(grep -v '^#' "$AUTH_FILE" | grep -v '^$' | grep -vE '^(ssh-rsa|ssh-ed25519|ecdsa-sha2-)' || true)
+        [[ -n "$INVALID_KEYS" ]] && error "Invalid SSH key format in $AUTH_FILE"
+    done
     
     chown -R "$DEPLOY_USER:$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
-    chmod 700 "/home/$DEPLOY_USER/.ssh"
-    chmod 600 "/home/$DEPLOY_USER/.ssh/authorized_keys"
     
     echo "✓ SSH keys configured"
+    mark_complete "setup_ssh_keys"
 }
 
 configure_ssh() {
+    if is_complete "configure_ssh"; then
+        echo "⚠ SSH already configured, skipping"
+        return
+    fi
+    
     log "Configuring SSH (Hybrid Security: Root Password + Deploy Keys-Only)"
     
-    # Backup original config
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+    # Backup original config if not already backed up
+    if [[ ! -f /etc/ssh/sshd_config.backup-provision ]]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup-provision
+    fi
     
     # Create custom SSH config
     cat > /etc/ssh/sshd_config.d/99-custom.conf << EOF
@@ -415,34 +632,59 @@ EOF
     
     # Restart SSH
     systemctl restart sshd
+    
+    # Verify SSH restarted successfully
+    sleep 2
+    if ! systemctl is-active --quiet sshd; then
+        error "SSH failed to restart! Restoring backup config..."
+    fi
+    
     echo "✓ SSH service restarted"
+    mark_complete "configure_ssh"
 }
 
 configure_firewall() {
+    if is_complete "configure_firewall"; then
+        echo "⚠ Firewall already configured, skipping"
+        return
+    fi
+    
     log "Configuring UFW Firewall"
     
-    # Set defaults
+    # Set defaults FIRST before adding rules
     ufw --force reset
     ufw default deny incoming
     ufw default allow outgoing
     
-    # Allow SSH on custom port
+    # CRITICAL: Add SSH rule BEFORE enabling firewall to prevent lockout
+    echo "  Adding SSH rule for port $SSH_PORT..."
     ufw allow "$SSH_PORT/tcp" comment 'SSH'
     
     # Allow HTTP/HTTPS for Kamal
     ufw allow 80/tcp comment 'HTTP'
     ufw allow 443/tcp comment 'HTTPS'
     
+    # Show rules before enabling
+    echo "  Rules to be enabled:"
+    ufw show added | grep -v '^#' || true
+    
     # Enable firewall
     ufw --force enable
     
-    # Configure UFW logging to separate file
-    ufw logging on
+    # Verify SSH port is allowed (critical to prevent lockout)
+    if ! ufw status | grep -q "$SSH_PORT/tcp.*ALLOW"; then
+        error "SSH port $SSH_PORT not allowed in firewall! This would cause lockout."
+    fi
+    
+    # Configure UFW logging (medium to avoid log spam)
+    ufw logging medium
     
     echo "✓ Firewall configured"
     echo "  - Port $SSH_PORT: SSH"
     echo "  - Port 80: HTTP"
     echo "  - Port 443: HTTPS"
+    
+    mark_complete "configure_firewall"
 }
 
 create_whitelist_updater() {
@@ -467,17 +709,19 @@ if [[ -n "$GIST_URL" ]]; then
         grep -v '^#' | \
         grep -v '^[[:space:]]*$' | \
         awk '{print $1}' | \
-        grep -E '^[0-9]+\.' >> "$TEMP_FILE" 2>/dev/null; then
+        grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$' >> "$TEMP_FILE" 2>/dev/null; then
         
         # Success - atomic update
         mv "$TEMP_FILE" "$WHITELIST_FILE"
         
         # Reload fail2ban if running
         if systemctl is-active --quiet fail2ban 2>/dev/null; then
-            systemctl reload fail2ban 2>/dev/null || true
+            if systemctl reload fail2ban 2>/dev/null; then
+                logger -t fail2ban-whitelist "Updated whitelist from Gist: $(wc -l < "$WHITELIST_FILE") IPs"
+            else
+                logger -t fail2ban-whitelist "WARNING: Whitelist updated but fail2ban reload failed"
+            fi
         fi
-        
-        logger -t fail2ban-whitelist "Updated whitelist from Gist: $(wc -l < "$WHITELIST_FILE") IPs"
     else
         # Fetch failed - keep existing file or create localhost-only
         if [[ ! -f "$WHITELIST_FILE" ]]; then
@@ -502,24 +746,29 @@ FAIL2BAN_WHITELIST_URL="$FAIL2BAN_WHITELIST_URL"
 EOF
     
     # Update the script to source this file
-    sed -i '2a source /etc/default/fail2ban-whitelist 2>/dev/null || true' /etc/fail2ban/scripts/update_whitelist.sh
+    if ! sed -i '2a source /etc/default/fail2ban-whitelist 2>/dev/null || true' /etc/fail2ban/scripts/update_whitelist.sh; then
+        error "Failed to update whitelist updater script"
+    fi
     
-    # Run immediately to create initial whitelist
-    /etc/fail2ban/scripts/update_whitelist.sh
+    # Verify the source line was added
+    if ! grep -q 'source /etc/default/fail2ban-whitelist' /etc/fail2ban/scripts/update_whitelist.sh; then
+        error "Whitelist updater script modification failed"
+    fi
     
-    echo "✓ Whitelist updater created"
-    [[ -f /etc/fail2ban/ip_whitelist.conf ]] && echo "  Whitelisted IPs: $(wc -l < /etc/fail2ban/ip_whitelist.conf)"
+    echo "✓ Whitelist updater created (will run after fail2ban starts)"
 }
 
 configure_fail2ban() {
-    log "Configuring fail2ban"
-    
-    if [[ "$ENABLE_FAIL2BAN" != "true" ]]; then
-        echo "⚠ fail2ban disabled, skipping"
+    if is_complete "configure_fail2ban"; then
+        echo "⚠ fail2ban already configured, skipping"
         return
     fi
     
-    # Create dynamic whitelist updater first
+    log "Configuring fail2ban"
+    
+    [[ "$ENABLE_FAIL2BAN" != "true" ]] && { echo "⚠ fail2ban disabled, skipping"; mark_complete "configure_fail2ban"; return; }
+    
+    # Create dynamic whitelist updater first (but don't run yet)
     create_whitelist_updater
     
     # Configure fail2ban
@@ -577,21 +826,52 @@ EOF
     systemctl enable fail2ban
     systemctl restart fail2ban
     
+    # Wait for fail2ban to start and verify with retry logic
+    local RETRY=0
+    while ! systemctl is-active --quiet fail2ban && [[ $RETRY -lt 10 ]]; do
+        sleep 1
+        RETRY=$((RETRY + 1))
+    done
+    
+    if ! systemctl is-active --quiet fail2ban; then
+        error "fail2ban failed to start after 10 seconds! Check: journalctl -u fail2ban -n 50"
+    fi
+    
+    # Wait for jails to initialize before running whitelist updater
+    sleep 2
+    RETRY=0
+    while ! fail2ban-client status &>/dev/null && [[ $RETRY -lt 5 ]]; do
+        sleep 1
+        RETRY=$((RETRY + 1))
+    done
+    
+    # Now run whitelist updater (fail2ban is ready)
+    /etc/fail2ban/scripts/update_whitelist.sh
+    
+    # Verify SSH jail is active
+    if ! fail2ban-client status sshd &>/dev/null; then
+        echo "⚠ Warning: fail2ban sshd jail not active yet (may need more time)"
+    fi
+    
     echo "✓ fail2ban configured"
     echo "  - Ban time: $(($FAIL2BAN_BANTIME / 3600)) hours"
     echo "  - Max retries: $FAIL2BAN_MAXRETRY"
     echo "  - Find time: $(($FAIL2BAN_FINDTIME / 60)) minutes"
     echo "  - Progressive bans: enabled"
     echo "  - Dynamic whitelist: enabled"
+    
+    mark_complete "configure_fail2ban"
 }
 
 configure_unattended_upgrades() {
-    log "Configuring Unattended Upgrades"
-    
-    if [[ "$ENABLE_UNATTENDED_UPGRADES" != "true" ]]; then
-        echo "⚠ Unattended upgrades disabled, skipping"
+    if is_complete "configure_unattended_upgrades"; then
+        echo "⚠ Unattended upgrades already configured, skipping"
         return
     fi
+    
+    log "Configuring Unattended Upgrades"
+    
+    [[ "$ENABLE_UNATTENDED_UPGRADES" != "true" ]] && { echo "⚠ Unattended upgrades disabled, skipping"; mark_complete "configure_unattended_upgrades"; return; }
     
     apt-get -yq install unattended-upgrades
     
@@ -619,31 +899,49 @@ EOF
     
     echo "✓ Unattended upgrades configured"
     echo "  - Auto-reboot: $ALLOW_AUTO_REBOOT"
+    
+    mark_complete "configure_unattended_upgrades"
 }
 
 create_swap() {
-    log "Creating Swap: $SWAP_SIZE"
-    
-    # Check if swap already exists
-    if swapon --show | grep -q '/swapfile'; then
-        echo "⚠ Swap already exists, skipping"
+    if is_complete "create_swap"; then
+        echo "⚠ Swap already configured, skipping"
         return
     fi
     
-    # Parse swap size to MB
-    local SIZE_MB
-    if [[ "$SWAP_SIZE" =~ ^([0-9]+)G$ ]]; then
-        SIZE_MB=$((${BASH_REMATCH[1]} * 1024))
-    elif [[ "$SWAP_SIZE" =~ ^([0-9]+)M$ ]]; then
-        SIZE_MB=${BASH_REMATCH[1]}
-    else
-        error "Invalid swap size format. Use: 2G or 2048M"
+    # Early check before acquiring lock to prevent unnecessary waiting
+    if swapon --show | grep -q '/swapfile'; then
+        echo "⚠ Swap already exists, skipping"
+        mark_complete "create_swap"
+        return
     fi
+    
+    log "Creating Swap: $SWAP_SIZE"
+    
+    # Use flock to prevent concurrent swap creation
+    (
+        flock -n 200 || { echo "⚠ Another swap creation in progress, waiting..."; flock 200; }
+        
+        # Double-check inside lock
+        if swapon --show | grep -q '/swapfile'; then
+            echo "⚠ Swap already exists, skipping"
+            mark_complete "create_swap"
+            return
+        fi
+    
+    # Parse swap size to MB (validation already done in validate_inputs)
+    local SIZE_MB=${SWAP_SIZE%[GM]}
+    [[ "$SWAP_SIZE" == *G ]] && SIZE_MB=$((SIZE_MB * 1024))
     
     # Create swap file - try fallocate first (faster), fallback to dd
     if ! fallocate -l "${SIZE_MB}M" /swapfile 2>/dev/null; then
         echo "⚠ fallocate not supported, using dd (slower)..."
         dd if=/dev/zero of=/swapfile bs=1M count="$SIZE_MB" status=progress
+    fi
+    
+    # Verify swap file was created
+    if [[ ! -f /swapfile ]]; then
+        error "Failed to create /swapfile"
     fi
     
     chmod 600 /swapfile
@@ -655,25 +953,74 @@ create_swap() {
         echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
     fi
     
+    # Verify swap is active
+    if ! swapon --show | grep -q '/swapfile'; then
+        error "Swap creation failed - swap not active"
+    fi
+    
     echo "✓ Swap created: $SWAP_SIZE"
+    mark_complete "create_swap"
+    
+    ) 200>/var/lock/provision_swap.lock
 }
 
 install_docker() {
+    if is_complete "install_docker"; then
+        echo "⚠ Docker already installed and configured, skipping"
+        return
+    fi
+    
     log "Installing Docker"
+    
+    # Ensure jq is available for Docker daemon.json validation later
+    if ! command -v jq &>/dev/null; then
+        echo "Installing jq for JSON validation..."
+        apt-get -yq install jq > /dev/null
+    fi
+    
+    # Check disk space (Docker needs ~500MB minimum)
+    local AVAILABLE_MB=$(df / | awk 'NR==2 {print int($4/1024)}')
+    if [[ $AVAILABLE_MB -lt 500 ]]; then
+        error "Insufficient disk space for Docker: ${AVAILABLE_MB}MB available, need at least 500MB"
+    fi
     
     # Check if Docker already installed
     if command -v docker &> /dev/null; then
         echo "⚠ Docker already installed: $(docker --version)"
         echo "  Ensuring $DEPLOY_USER in docker group..."
-        usermod -aG docker "$DEPLOY_USER"
+        if ! usermod -aG docker "$DEPLOY_USER"; then
+            error "Failed to add $DEPLOY_USER to docker group"
+        fi
+        # Verify user is in docker group
+        if ! groups "$DEPLOY_USER" | grep -q docker; then
+            error "User $DEPLOY_USER not in docker group after usermod"
+        fi
+        mark_complete "install_docker"
         return
     fi
     
-    # Install Docker using official script
-    curl -fsSL https://get.docker.com | sh
+    # Install Docker using official script with error handling
+    echo "Downloading Docker installation script..."
+    if ! curl -fsSL https://get.docker.com -o /tmp/get-docker.sh; then
+        error "Failed to download Docker installation script"
+    fi
+    
+    echo "Installing Docker (this may take a few minutes)..."
+    if ! sh /tmp/get-docker.sh > /dev/null 2>&1; then
+        error "Docker installation failed"
+    fi
+    
+    rm -f /tmp/get-docker.sh
     
     # Add deploy user to docker group
-    usermod -aG docker "$DEPLOY_USER"
+    if ! usermod -aG docker "$DEPLOY_USER"; then
+        error "Failed to add $DEPLOY_USER to docker group"
+    fi
+    
+    # Verify user is in docker group
+    if ! groups "$DEPLOY_USER" | grep -q docker; then
+        error "User $DEPLOY_USER not in docker group after usermod"
+    fi
     
     # Enable Docker service
     systemctl enable docker
@@ -702,14 +1049,46 @@ install_docker() {
 }
 EOF
     
+    # Validate JSON syntax before applying
+    if command -v python3 &>/dev/null; then
+        if ! python3 -m json.tool /etc/docker/daemon.json >/dev/null 2>&1; then
+            error "Invalid JSON in Docker daemon.json configuration"
+        fi
+    elif command -v jq &>/dev/null; then
+        if ! jq empty /etc/docker/daemon.json >/dev/null 2>&1; then
+            error "Invalid JSON in Docker daemon.json configuration"
+        fi
+    fi
+    echo "✓ Docker configuration validated"
+    
+    # Reload Docker daemon to apply configuration (safer than restart on fresh install)
+    systemctl daemon-reload
     systemctl restart docker
+    
+    # Wait for Docker to be ready
+    local RETRY=0
+    while ! docker info &>/dev/null && [[ $RETRY -lt 10 ]]; do
+        sleep 1
+        RETRY=$((RETRY + 1))
+    done
+    
+    [[ $RETRY -eq 10 ]] && error "Docker daemon not responding after configuration"
     
     echo "✓ Docker installed: $(docker --version)"
     echo "  - User $DEPLOY_USER added to docker group"
+    echo "  - Docker group will activate after reboot"
     echo "  - Log rotation configured"
+    echo "  - Daemon verified functional"
+    
+    mark_complete "install_docker"
 }
 
 configure_sysctl() {
+    if is_complete "configure_sysctl"; then
+        echo "⚠ System parameters already configured, skipping"
+        return
+    fi
+    
     log "Configuring System Parameters"
     
     cat > /etc/sysctl.d/99-custom.conf << EOF
@@ -740,41 +1119,53 @@ EOF
     sysctl -p /etc/sysctl.d/99-custom.conf
     
     echo "✓ System parameters configured"
+    mark_complete "configure_sysctl"
 }
 
 setup_ubuntu_livepatch() {
-    log "Setting Up Ubuntu Livepatch"
-    
-    if [[ -z "$UBUNTU_LIVEPATCH_TOKEN" ]]; then
-        echo "⚠ No Livepatch token provided, skipping"
+    if is_complete "setup_ubuntu_livepatch"; then
+        echo "⚠ Ubuntu Livepatch already configured, skipping"
         return
     fi
     
-    apt-get -yq install snapd
+    log "Setting Up Ubuntu Livepatch"
+    
+    [[ -z "$UBUNTU_LIVEPATCH_TOKEN" ]] && { echo "⚠ No Livepatch token provided, skipping"; mark_complete "setup_ubuntu_livepatch"; return; }
+    
+    apt-get -yq install snapd > /dev/null
     snap install canonical-livepatch
     canonical-livepatch enable "$UBUNTU_LIVEPATCH_TOKEN"
     
     echo "✓ Ubuntu Livepatch enabled"
+    mark_complete "setup_ubuntu_livepatch"
 }
 
 setup_canary_token() {
-    log "Setting Up CanaryTokens Reboot Alert"
-    
-    if [[ "$ENABLE_CANARY_TOKEN" != "true" ]] || [[ -z "$CANARYTOKEN_URL" ]]; then
-        echo "⚠ CanaryTokens not configured, skipping"
+    if is_complete "setup_canary_token"; then
+        echo "⚠ CanaryTokens already configured, skipping"
         return
     fi
+    
+    log "Setting Up CanaryTokens Reboot Alert"
+    
+    [[ "$ENABLE_CANARY_TOKEN" != "true" || -z "$CANARYTOKEN_URL" ]] && { echo "⚠ CanaryTokens not configured, skipping"; mark_complete "setup_canary_token"; return; }
     
     cat > /etc/cron.d/reboot_canary << EOF
 @reboot $DEPLOY_USER curl -fsS --retry 3 --max-time 10 "$CANARYTOKEN_URL" > /dev/null 2>&1 || true
 EOF
     
-    chmod +x /etc/cron.d/reboot_canary
+    chmod 600 /etc/cron.d/reboot_canary
     
-    echo "✓ CanaryTokens reboot alert configured"
+    echo "✓ CanaryTokens reboot alert configured (secure permissions)"
+    mark_complete "setup_canary_token"
 }
 
 setup_log_rotation() {
+    if is_complete "setup_log_rotation"; then
+        echo "⚠ Log rotation already configured, skipping"
+        return
+    fi
+    
     log "Configuring Log Rotation"
     
     cat > /etc/logrotate.d/custom-security << EOF
@@ -801,23 +1192,27 @@ setup_log_rotation() {
 EOF
     
     echo "✓ Log rotation configured"
+    mark_complete "setup_log_rotation"
 }
 
 configure_lan_ip() {
-    log "Configuring Binary Lane Private Network IP"
-    
-    if [[ -z "$LAN_IP" ]]; then
-        echo "⚠ No LAN IP provided, skipping"
+    if is_complete "configure_lan_ip"; then
+        echo "⚠ LAN IP already configured, skipping"
         return
     fi
     
-    # Detect primary network interface
-    local IFACE
-    IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+    log "Configuring Binary Lane Private Network IP"
     
-    if [[ -z "$IFACE" ]]; then
-        echo "⚠ Could not detect network interface, using eth0"
-        IFACE="eth0"
+    [[ -z "$LAN_IP" ]] && { echo "⚠ No LAN IP provided, skipping"; mark_complete "configure_lan_ip"; return; }
+    
+    # Detect primary network interface
+    local IFACE=$(ip route show default | awk '/default/ {print $5; exit}')
+    IFACE=${IFACE:-eth0}
+    [[ -z "${IFACE// /}" ]] && IFACE="eth0"
+    
+    # Verify interface exists
+    if ! ip link show "$IFACE" &>/dev/null; then
+        error "Network interface $IFACE does not exist"
     fi
     
     echo "  Using interface: $IFACE"
@@ -833,25 +1228,102 @@ network:
 EOF
     
     chmod 600 /etc/netplan/60-private-network.yaml
-    netplan apply
+    
+    # Backup existing netplan configs before making changes
+    mkdir -p /etc/netplan/backup
+    
+    # Save list of original config files for precise rollback
+    local ORIGINAL_CONFIGS=()
+    mapfile -t ORIGINAL_CONFIGS < <(find /etc/netplan -maxdepth 1 -name '*.yaml' -type f 2>/dev/null || true)
+    
+    # Create backup copies
+    for config in "${ORIGINAL_CONFIGS[@]}"; do
+        [[ -f "$config" ]] && cp "$config" /etc/netplan/backup/ 2>/dev/null || true
+    done
+    
+    # Test netplan config before applying
+    if ! netplan generate; then
+        error "Invalid netplan configuration generated"
+    fi
+    
+    # Apply with timeout and verification
+    if ! timeout 10 netplan apply 2>/dev/null; then
+        echo "⚠ WARNING: netplan apply timed out or failed, attempting rollback"
+        # Remove our new config
+        rm -f /etc/netplan/60-private-network.yaml
+        # Restore ONLY the original configs (not all backup files)
+        for orig_config in "${ORIGINAL_CONFIGS[@]}"; do
+            local basename_file=$(basename "$orig_config")
+            [[ -f "/etc/netplan/backup/$basename_file" ]] && cp "/etc/netplan/backup/$basename_file" "$orig_config" 2>/dev/null || true
+        done
+        netplan apply 2>/dev/null || true
+        error "Failed to apply netplan configuration (rolled back)"
+    fi
+    
+    # Verify network still works after netplan changes (test multiple endpoints)
+    sleep 3
+    local CONNECTIVITY_OK=false
+    for test_ip in 8.8.8.8 1.1.1.1 208.67.222.222; do
+        if ping -c 2 -W 3 "$test_ip" &>/dev/null; then
+            CONNECTIVITY_OK=true
+            break
+        fi
+    done
+    
+    if [[ "$CONNECTIVITY_OK" != "true" ]]; then
+        echo "⚠ WARNING: Network connectivity affected, rolling back netplan changes"
+        # Remove our new config
+        rm -f /etc/netplan/60-private-network.yaml
+        # Restore ONLY the original configs
+        for orig_config in "${ORIGINAL_CONFIGS[@]}"; do
+            local basename_file=$(basename "$orig_config")
+            [[ -f "/etc/netplan/backup/$basename_file" ]] && cp "/etc/netplan/backup/$basename_file" "$orig_config" 2>/dev/null || true
+        done
+        netplan apply 2>/dev/null || true
+        error "Network connectivity lost after netplan changes (rolled back)"
+    fi
     
     echo "✓ Private network IP configured: $LAN_IP on $IFACE"
+    mark_complete "configure_lan_ip"
 }
 
 verify_ssh_connectivity() {
     log "Verifying SSH Configuration"
     
     # Test SSHD config
-    if ! sshd -t 2>/dev/null; then
-        error "SSH configuration test failed! NOT rebooting to prevent lockout."
+    if ! sshd -t 2>&1; then
+        echo "  ✗ SSH configuration test failed!"
+        error "SSH configuration invalid! NOT rebooting to prevent lockout."
     fi
     echo "  ✓ SSH config valid"
     
+    # Verify SSH service is running
+    if ! check_service sshd; then
+        error "SSH service not running!"
+    fi
+    echo "  ✓ SSH service active"
+    
     # Verify SSH is listening on the correct port
+    local MAX_WAIT=10
+    local WAIT=0
+    while ! ss -tlnp | grep -q ":$SSH_PORT " && [[ $WAIT -lt $MAX_WAIT ]]; do
+        echo "  ⚠ Waiting for SSH to listen on port $SSH_PORT..."
+        sleep 1
+        WAIT=$((WAIT + 1))
+    done
+    
     if ss -tlnp | grep -q ":$SSH_PORT "; then
         echo "  ✓ SSH listening on port $SSH_PORT"
     else
         error "SSH not listening on port $SSH_PORT! Check configuration."
+    fi
+    
+    # Verify firewall allows SSH port
+    if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+        if ! ufw status | grep -q "$SSH_PORT.*ALLOW"; then
+            error "Firewall not allowing SSH port $SSH_PORT!"
+        fi
+        echo "  ✓ Firewall allows SSH port"
     fi
     
     # Verify authorized_keys exists and has correct permissions
@@ -893,7 +1365,7 @@ verify_setup() {
     echo "Checking services..."
     
     # Check SSH
-    if systemctl is-active --quiet sshd; then
+    if check_service sshd; then
         echo "  ✓ SSH running on port $SSH_PORT"
     else
         echo "  ✗ SSH not running"
@@ -908,7 +1380,7 @@ verify_setup() {
     
     # Check fail2ban
     if [[ "$ENABLE_FAIL2BAN" == "true" ]]; then
-        if systemctl is-active --quiet fail2ban; then
+        if check_service fail2ban; then
             echo "  ✓ fail2ban running"
         else
             echo "  ✗ fail2ban not running"
@@ -916,17 +1388,13 @@ verify_setup() {
     fi
     
     # Check Docker
-    if command -v docker &> /dev/null; then
-        echo "  ✓ Docker installed"
-        if groups "$DEPLOY_USER" | grep -q docker; then
-            echo "  ✓ $DEPLOY_USER in docker group"
-        fi
+    if command -v docker &> /dev/null && check_service docker; then
+        echo "  ✓ Docker installed and running"
+        groups "$DEPLOY_USER" | grep -q docker && echo "  ✓ $DEPLOY_USER in docker group"
     fi
     
     # Check swap
-    if swapon --show | grep -q '/swapfile'; then
-        echo "  ✓ Swap active"
-    fi
+    swapon --show | grep -q '/swapfile' && echo "  ✓ Swap active"
     
     echo ""
     echo "Setup verification complete!"
@@ -991,13 +1459,15 @@ main() {
     # Show banner
     clear 2>/dev/null || true
     cat << 'EOF'
-╔═══════════════════════════════════════════════════════════╗
-║                                                           ║
-║   Ubuntu VPS Provisioning Script for Kamal 2             ║
-║   Optimized for Binary Lane VPS                          ║
-║                                                           ║
-╚═══════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════╗
+║                                                ║
+║   Ubuntu VPS Provisioning Script for Kamal 2   ║
+║                                                ║
+╚════════════════════════════════════════════════╝
 EOF
+    
+    # Run comprehensive pre-flight checks
+    preflight_checks
     
     # Validate inputs
     validate_inputs
