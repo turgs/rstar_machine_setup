@@ -699,6 +699,14 @@ EOF
     echo "  - Root: Password + keys (emergency access)"
     echo "  - $DEPLOY_USER: Keys only (production secure)"
     
+    # Handle Ubuntu 22.10+ socket activation which conflicts with custom ports
+    if systemctl is-active --quiet ssh.socket; then
+        echo "  Disabling ssh.socket for custom port configuration..."
+        systemctl stop ssh.socket
+        systemctl disable ssh.socket
+        systemctl enable ssh
+    fi
+
     # Restart SSH with error handling
     echo "  Restarting SSH service..."
     if ! systemctl restart ssh 2>&1; then
