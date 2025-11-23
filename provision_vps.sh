@@ -617,9 +617,17 @@ configure_ssh() {
         cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup-provision
     fi
     
-    # Comment out Port directive in main config to avoid conflicts
+    # CRITICAL: Comment out ALL Port directives in main config
+    # SSH config uses first match wins - if Port 22 is in main config before Include,
+    # our sshd_config.d/99-custom.conf Port directive will be ignored
     sed -i 's/^Port /#Port /' /etc/ssh/sshd_config
-    sed -i 's/^#Port 22$/#Port 22/' /etc/ssh/sshd_config
+    sed -i 's/^#Port /#Port /' /etc/ssh/sshd_config  # Catch already commented lines
+    
+    # Verify no active Port directive remains in main config
+    if grep -E '^[^#]*Port ' /etc/ssh/sshd_config; then
+        echo "  ✗ Failed to comment out Port directive in main config!"
+        error "Could not modify /etc/ssh/sshd_config - manual intervention required"
+    fi
     
     # Create custom SSH config with better structure
     cat > /etc/ssh/sshd_config.d/99-custom.conf << EOF
