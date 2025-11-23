@@ -673,11 +673,11 @@ EOF
     echo "  - $DEPLOY_USER: Keys only (production secure)"
     
     # Restart SSH
-    systemctl restart sshd
+    systemctl restart ssh
     
     # Verify SSH restarted successfully
     sleep 2
-    if ! systemctl is-active --quiet sshd; then
+    if ! systemctl is-active --quiet ssh; then
         error "SSH failed to restart! Restoring backup config..."
     fi
     
