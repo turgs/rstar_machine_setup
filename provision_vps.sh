@@ -1352,7 +1352,7 @@ verify_ssh_connectivity() {
     echo "  ✓ SSH config valid"
     
     # Verify SSH service is running
-    if ! check_service sshd; then
+    if ! check_service ssh; then
         error "SSH service not running!"
     fi
     echo "  ✓ SSH service active"
@@ -1419,7 +1419,7 @@ verify_setup() {
     echo "Checking services..."
     
     # Check SSH
-    if check_service sshd; then
+    if check_service ssh; then
         echo "  ✓ SSH running on port $SSH_PORT"
     else
         echo "  ✗ SSH not running"
