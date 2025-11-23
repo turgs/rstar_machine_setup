@@ -19,19 +19,23 @@ export DEBIAN_FRONTEND=noninteractive
 error_handler() {
     local line_no=$1
     local exit_code=$?
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "❌ SCRIPT FAILED at line $line_no (exit code: $exit_code)"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    [[ -f "$STATE_FILE" ]] && echo "Last completed steps are in: $STATE_FILE"
-    echo "Check logs: journalctl -xe"
-    echo ""
-    echo "For support, provide:"
-    echo "  1. This error output"
-    echo "  2. Contents of $STATE_FILE"
-    echo "  3. Output of: journalctl -xe | tail -50"
-    echo ""
+    {
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "❌ SCRIPT FAILED at line $line_no (exit code: $exit_code)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        [[ -f "$STATE_FILE" ]] && echo "Last completed steps are in: $STATE_FILE"
+        echo "Check logs: journalctl -xe"
+        echo ""
+        echo "For support, provide:"
+        echo "  1. This error output"
+        echo "  2. Contents of $STATE_FILE"
+        echo "  3. Output of: journalctl -xe | tail -50"
+        echo ""
+        echo "To debug, read the script around line $line_no"
+        echo ""
+    } >&2
     exit 1
 }
 
@@ -399,14 +403,19 @@ validate_inputs() {
     echo "✓ fail2ban: $ENABLE_FAIL2BAN"
     [[ -n "$CANARYTOKEN_URL" ]] && echo "✓ CanaryTokens: enabled"
     [[ -n "$UBUNTU_LIVEPATCH_TOKEN" ]] && echo "✓ Livepatch: enabled"
+    
+    echo "DEBUG: validate_inputs completed successfully" >&2
 }
 
 update_system() {
+    echo "DEBUG: Entered update_system function" >&2
+    
     if is_complete "update_system"; then
         echo "⚠ System already updated, skipping"
         return
     fi
     
+    echo "DEBUG: Starting system update" >&2
     log "Updating System Packages"
     
     echo "Running apt-get update (this may take 1-2 minutes)..."
@@ -1485,6 +1494,10 @@ EOF
     
     # Validate inputs
     validate_inputs
+    
+    echo ""
+    echo "✓ All validations passed - starting provisioning steps..."
+    echo ""
     
     # Execute provisioning steps
     update_system
