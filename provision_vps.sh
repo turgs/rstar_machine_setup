@@ -1525,6 +1525,11 @@ verify_setup() {
 show_summary() {
     log "Provisioning Complete!"
     
+    # Try to retrieve password if not set (e.g. if step was skipped)
+    if [[ -z "$DEPLOY_PASSWORD" ]] && [[ -f "/root/.deploy_password" ]]; then
+        DEPLOY_PASSWORD=$(cat /root/.deploy_password)
+    fi
+    
     cat << EOF
 Server is now configured for Kamal 2 deployment.
 
