@@ -689,24 +689,24 @@ EOF
     
     # Restart SSH with error handling
     echo "  Restarting SSH service..."
-    if ! systemctl restart sshd 2>&1; then
+    if ! systemctl restart ssh 2>&1; then
         echo "  ✗ SSH failed to restart!"
         echo "  Showing recent SSH logs:"
-        journalctl -u sshd -n 20 --no-pager
+        journalctl -u ssh -n 20 --no-pager
         echo ""
         echo "  Restoring backup configuration..."
         rm -f /etc/ssh/sshd_config.d/99-custom.conf
-        systemctl restart sshd
+        systemctl restart ssh
         error "SSH restart failed - backup restored"
     fi
     
     # Verify SSH restarted successfully with more time
     sleep 3
-    if ! systemctl is-active --quiet sshd; then
+    if ! systemctl is-active --quiet ssh; then
         echo "  ✗ SSH service not active after restart!"
-        journalctl -u sshd -n 30 --no-pager
+        journalctl -u ssh -n 30 --no-pager
         rm -f /etc/ssh/sshd_config.d/99-custom.conf
-        systemctl restart sshd
+        systemctl restart ssh
         error "SSH failed to start - backup restored"
     fi
     
@@ -723,7 +723,7 @@ EOF
         echo "  Currently listening on:"
         ss -tlnp | grep sshd || echo "    SSH not listening on any port"
         rm -f /etc/ssh/sshd_config.d/99-custom.conf
-        systemctl restart sshd
+        systemctl restart ssh
         error "SSH not listening on configured port - backup restored"
     fi
     
