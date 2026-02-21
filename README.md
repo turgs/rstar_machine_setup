@@ -48,6 +48,7 @@ That's it! Your server will be fully configured and reboot automatically.
   - 5 retry attempts allowed
   - Dynamic IP whitelist via GitHub Gist
   - Auto-updates hourly
+  - **Rails SecurityFilter jail** (optional - for Rails apps)
 
 - ✅ **UFW Firewall**
   - Ports 33003 (SSH), 80 (HTTP), 443 (HTTPS)
@@ -224,6 +225,70 @@ sudo journalctl -u fail2ban -f
 
 ---
 
+## 🛡️ Rails SecurityFilter Integration
+
+For Rails apps using the SecurityFilter middleware (blocks PHP probes, WordPress scans, etc.), this repo includes a fail2ban filter/jail to ban malicious IPs at the firewall level.
+
+### How It Works
+
+1. **SecurityFilter middleware** (in your Rails app) blocks malicious requests and logs:
+   ```
+   [SecurityFilter] BLOCKED ip=1.2.3.4 {...}
+   [SecurityFilter] BANNED ip=1.2.3.4 duration=86400s ...
+   ```
+
+2. **fail2ban** reads these logs and bans IPs at the firewall (iptables)
+
+3. **Two-tier protection:**
+   - App-level: Immediate blocking (resets on restart)
+   - Firewall-level: Persistent blocking via fail2ban
+
+### Setup (Post-Provisioning)
+
+After running `provision_vps.sh`, copy the Rails filter/jail configs:
+
+```bash
+# From your local machine
+scp -P 33003 fail2ban/filter.d/rails-security.conf deploy@YOUR_SERVER:/tmp/
+scp -P 33003 fail2ban/jail.d/rails-security.conf deploy@YOUR_SERVER:/tmp/
+
+# Install and enable
+ssh -p 33003 deploy@YOUR_SERVER "sudo mv /tmp/rails-security.conf /etc/fail2ban/filter.d/ && sudo mv /tmp/rails-security.conf /etc/fail2ban/jail.d/ && sudo fail2ban-client reload"
+```
+
+### Kamal Log Volume
+
+Your Kamal `deploy.yml` needs to expose Rails logs to the host:
+
+```yaml
+volumes:
+  - "storage:/rails/storage"
+  - "/var/log/receptionstar:/rails/log"  # Expose logs for fail2ban
+```
+
+### Verify
+
+```bash
+# Check jail is active
+sudo fail2ban-client status rails-security
+
+# Test filter against logs
+sudo fail2ban-regex /var/log/receptionstar/production.log /etc/fail2ban/filter.d/rails-security.conf
+
+# View banned IPs
+sudo fail2ban-client get rails-security banned
+```
+
+### Log Format
+
+The filter matches these log patterns from SecurityFilter:
+```
+[SecurityFilter] BLOCKED ip=<HOST> {"timestamp":"...","path":"/shell.php",...}
+[SecurityFilter] BANNED ip=<HOST> duration=86400s reason="..."
+```
+
+---
+
 ## 🎯 Kamal 2 Integration
 
 ### Configure Kamal for Custom SSH Port
@@ -312,7 +377,7 @@ sudo journalctl -xe
 
 ---
 
-## ��️ Security Features
+## 🛡️ Security Features
 
 ### Hybrid SSH Authentication
 - **Root user:** Password + key auth enabled
@@ -332,6 +397,7 @@ sudo journalctl -xe
 - **Max retries:** 5 (allows typos)
 - **Progressive bans:** Repeat offenders get longer bans
 - **Dynamic whitelist:** Your IPs never banned
+- **Rails SecurityFilter jail:** Blocks PHP/WordPress scanners (optional)
 
 ### Firewall Rules
 - **Port 33003:** SSH (custom port reduces bot noise by ~95%)
@@ -355,6 +421,9 @@ sudo /etc/fail2ban/scripts/update_whitelist.sh
 ```bash
 # View banned IPs
 sudo fail2ban-client status sshd
+
+# View Rails security bans
+sudo fail2ban-client status rails-security
 
 # Unban an IP
 sudo fail2ban-client set sshd unbanip 1.2.3.4
@@ -475,6 +544,12 @@ curl -fsSL https://gist.githubusercontent.com/turgs/6d471a01fa901146c0ed9e2138f7
 /swapfile                                      # Swap file
 ```
 
+### Optional Rails SecurityFilter Files (manual install)
+```
+/etc/fail2ban/filter.d/rails-security.conf    # Rails filter pattern
+/etc/fail2ban/jail.d/rails-security.conf      # Rails jail config
+```
+
 ---
 
 ## 🔄 Comparison with Old Scripts
@@ -498,83 +573,4 @@ curl -fsSL https://gist.githubusercontent.com/turgs/6d471a01fa901146c0ed9e2138f7
 - ✅ Idempotent (safe to re-run)
 - ✅ Error handling and verification
 - ✅ Detailed logging and output
-
----
-
-## 🎓 Best Practices
-
-### Before Provisioning
-1. ✅ (Optional) Have your SSH public key ready or add to Gist
-2. ✅ Update your IP in the Gist
-3. ✅ Note the server IP address
-4. ✅ Have Binary Lane console access ready (emergency)
-
-### After Provisioning
-1. ✅ Save the deploy user password (output at end)
-2. ✅ Test SSH connection immediately
-3. ✅ Test Docker: `docker ps`
-4. ✅ Configure Kamal with port 33003
-5. ✅ Add server IP to Gist whitelist (prevent self-ban)
-
-### Ongoing Maintenance
-1. ✅ Keep Gist updated with current IPs
-2. ✅ Monitor fail2ban bans occasionally
-3. ✅ Review security updates monthly
-4. ✅ Test emergency root access periodically
-
----
-
-## 📝 Notes
-
-- **Port 33003** chosen to reduce automated bot attacks (~95% reduction in noise)
-- **Root password auth** kept for Binary Lane emergency access (defense in depth)
-- **24h fail2ban bans** are sweet spot between security and usability
-- **Dynamic whitelist** means you can update IPs without SSH access
-- **Kamal 2** fully supports custom SSH ports via config
-- **Output streaming** - Full real-time output whether running locally or via SSH pipe
-- **SSH key sources** - Script tries: CLI flag → Gist → Provider key → Root's key → Warns if none
-
----
-
-## 🆘 Support
-
-### Log Files
-- SSH: `/var/log/auth.log`
-- fail2ban: `/var/log/fail2ban.log`
-- UFW: `/var/log/ufw.log`
-- System: `journalctl -xe`
-
-### Useful Commands
-```bash
-# Service status
-systemctl status sshd fail2ban docker ufw
-
-# Check ports
-ss -tulpn | grep LISTEN
-
-# Test SSH config
-sshd -t
-
-# View active firewall rules
-ufw status verbose
-
-# Check Docker
-docker info
-docker ps
-```
-
----
-
-## 📜 License
-
-MIT License - Use freely for your projects
-
----
-
-## 🙏 Credits
-
-Built for Ruby on Rails deployments with Kamal 2 on Binary Lane VPS infrastructure.
-
-**Author:** Tim Burgan (@turgs)  
-**Date:** November 2025  
-**Version:** 1.0
+- ✅ Rails SecurityFilter support (optional)
