@@ -1,7 +1,8 @@
 #!/bin/bash
 #
-# provision_vps.sh - Ubuntu VPS Provisioning Script for Kamal 2
-# Designed for Binary Lane VPS running Ubuntu 22.04/24.04 LTS
+# provision_vps.sh - VPS Provisioning Script for Kamal 2
+# Supports Ubuntu 22.04/24.04 LTS and Debian 12 (bookworm) / 13 (trixie)
+# Designed for Binary Lane VPS or any cloud / bare-metal host
 #
 # Usage:
 #   bash provision_vps.sh --ssh-key="ssh-ed25519 AAAA..."
@@ -222,10 +223,25 @@ check_root() {
     fi
 }
 
-check_ubuntu() {
-    if ! grep -q "Ubuntu" /etc/os-release; then
-        error "This script is designed for Ubuntu"
+check_supported_os() {
+    if [[ ! -r /etc/os-release ]]; then
+        error "Cannot read /etc/os-release; unsupported OS"
     fi
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    OS_ID="${ID:-unknown}"
+    OS_VERSION_ID="${VERSION_ID:-unknown}"
+    OS_CODENAME="${VERSION_CODENAME:-unknown}"
+    case "$OS_ID" in
+        ubuntu)
+            ;;
+        debian)
+            ;;
+        *)
+            error "Unsupported OS: $OS_ID. This script supports Ubuntu and Debian."
+            ;;
+    esac
+    echo "✓ Detected OS: $OS_ID $OS_VERSION_ID ($OS_CODENAME)"
 }
 
 check_service() {
@@ -1246,7 +1262,14 @@ setup_ubuntu_livepatch() {
     log "Setting Up Ubuntu Livepatch"
     
     [[ -z "$UBUNTU_LIVEPATCH_TOKEN" ]] && { echo "⚠ No Livepatch token provided, skipping"; mark_complete "setup_ubuntu_livepatch"; return; }
-    
+
+    if [[ "${OS_ID:-}" != "ubuntu" ]]; then
+        echo "⚠ Ubuntu Livepatch is Ubuntu-only; current OS is '${OS_ID:-unknown}'. Skipping."
+        echo "  For kernel livepatching on Debian, see KernelCare (paid) or schedule reboots."
+        mark_complete "setup_ubuntu_livepatch"
+        return
+    fi
+
     echo "Installing snapd..."
     if ! apt-get -yq install snapd 2>&1 | grep -v "^Selecting\|^Preparing\|^Unpacking\|^Setting up"; then
         echo "ERROR: Failed to install snapd"
@@ -1339,7 +1362,16 @@ configure_lan_ip() {
     
     echo "  Using interface: $IFACE"
     
-    # Use netplan for modern Ubuntu
+    # Use netplan (Ubuntu default; on Debian requires `apt install netplan.io`)
+    if ! command -v netplan &>/dev/null; then
+        if [[ "${OS_ID:-}" == "debian" ]]; then
+            echo "  Installing netplan.io for Debian..."
+            apt-get -yq install netplan.io || error "Failed to install netplan.io on Debian"
+        else
+            error "netplan not available and OS is not Debian; cannot configure LAN IP"
+        fi
+    fi
+
     cat > /etc/netplan/60-private-network.yaml << EOF
 network:
   version: 2
@@ -1581,7 +1613,7 @@ main() {
     
     # Pre-flight checks
     check_root
-    check_ubuntu
+    check_supported_os
     
     # Show banner with commit info
     clear 2>/dev/null || true
@@ -1598,7 +1630,8 @@ main() {
     cat << EOF
 ╔════════════════════════════════════════════════╗
 ║                                                ║
-║   Ubuntu VPS Provisioning Script for Kamal 2   ║
+║     VPS Provisioning Script for Kamal 2        ║
+║     (Ubuntu LTS / Debian 12+)                  ║
 ║   Version: ${SCRIPT_VERSION}$(printf '%*s' $((37 - ${#SCRIPT_VERSION})) '')║
 ║                                                ║
 ╚════════════════════════════════════════════════╝

@@ -1,8 +1,14 @@
 # rstar_machine_setup
 
-**Ubuntu VPS Provisioning for Kamal 2 Deployments**
+**VPS Provisioning for Kamal 2 Deployments**
 
-Automated, non-interactive script to provision Binary Lane (or any) Ubuntu VPS for production Ruby on Rails deployments using Kamal 2.
+Automated, non-interactive script to provision a Binary Lane (or any cloud / bare-metal) host for production Ruby on Rails deployments using Kamal 2.
+
+**Supported OS:**
+- Ubuntu 22.04 / 24.04 LTS
+- Debian 12 (bookworm) / 13 (trixie)
+
+Identical behaviour on both — Docker, ufw, fail2ban, unattended-upgrades, ssh hardening all use cross-distro tooling. Ubuntu Livepatch is automatically skipped on Debian.
 
 ---
 
