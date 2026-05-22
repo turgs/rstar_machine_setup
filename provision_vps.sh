@@ -357,10 +357,20 @@ validate_inputs() {
     echo "✓ Deploy UID: $DEPLOY_UID (available)"
     
     # Validate swap size format and disk space
-    if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GM]$ ]]; then
-        error "Invalid swap size format: $SWAP_SIZE (use: 2G or 2048M)"
+    # Skip swap on machines with >3GB RAM — swap masks memory problems on
+    # well-provisioned servers. On small VPS (≤3GB), swap is a necessary safety net.
+    local total_ram_mb
+    total_ram_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+    if (( total_ram_mb > 3072 )); then
+        SKIP_SWAP=true
+        echo "✓ RAM: ${total_ram_mb}MB (>3GB) — skipping swap (not needed)"
+    else
+        SKIP_SWAP=false
+        if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GM]$ ]]; then
+            error "Invalid swap size format: $SWAP_SIZE (use: 2G or 2048M)"
+        fi
+        echo "✓ RAM: ${total_ram_mb}MB (≤3GB) — swap: $SWAP_SIZE"
     fi
-    echo "✓ Swap size: $SWAP_SIZE"
     
     # Validate timezone
     if ! timedatectl list-timezones | grep -qx "$TIMEZONE"; then
@@ -1021,6 +1031,13 @@ create_swap() {
         echo "⚠ Swap already configured, skipping"
         return
     fi
+
+    # Skip swap on well-provisioned machines (>3GB RAM)
+    if [[ "$SKIP_SWAP" == "true" ]]; then
+        echo "⚠ Skipping swap — RAM >3GB, swap would mask memory problems"
+        mark_complete "create_swap"
+        return
+    fi
     
     # Early check before acquiring lock to prevent unnecessary waiting
     if swapon --show | grep -q '/swapfile'; then
@@ -1206,12 +1223,17 @@ configure_sysctl() {
     
     log "Configuring System Parameters"
     
+    # No swap on well-provisioned machines: swappiness=0 tells kernel to
+    # avoid swap entirely. On small VPS with swap: 10 = swap only under pressure.
+    local swappiness=10
+    [[ "$SKIP_SWAP" == "true" ]] && swappiness=0
+    
     cat > /etc/sysctl.d/99-custom.conf << EOF
 # File system - Docker/Kamal optimization
 fs.inotify.max_user_watches=524288
 
 # Memory management - Container optimization
-vm.swappiness=10
+vm.swappiness=$swappiness
 vm.vfs_cache_pressure=50
 vm.overcommit_memory=1
 
@@ -1516,7 +1538,11 @@ verify_setup() {
     fi
     
     # Check swap
-    swapon --show | grep -q '/swapfile' && echo "  ✓ Swap active"
+    if [[ "$SKIP_SWAP" == "true" ]]; then
+        ! swapon --show | grep -q '/swapfile' && echo "  ✓ Swap skipped (RAM >3GB)"
+    else
+        swapon --show | grep -q '/swapfile' && echo "  ✓ Swap active"
+    fi
     
     echo ""
     echo "Setup verification complete!"
