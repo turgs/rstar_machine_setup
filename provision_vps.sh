@@ -69,7 +69,7 @@ FAIL2BAN_WHITELIST_URL="${FAIL2BAN_WHITELIST_URL:-https://gist.githubusercontent
 
 # System Configuration
 TIMEZONE="${TIMEZONE:-UTC}"
-SWAP_SIZE="${SWAP_SIZE:-2G}"
+SWAP_SIZE="${SWAP_SIZE:-auto}"
 ENABLE_UNATTENDED_UPGRADES="${ENABLE_UNATTENDED_UPGRADES:-true}"
 ALLOW_AUTO_REBOOT="${ALLOW_AUTO_REBOOT:-false}"
 AUTO_REBOOT="${AUTO_REBOOT:-true}"
@@ -104,6 +104,12 @@ parse_args() {
                 ;;
             --swap-size=*)
                 SWAP_SIZE="${1#*=}"
+                SWAP_EXPLICIT=true
+                shift
+                ;;
+            --no-swap)
+                SWAP_SIZE="none"
+                SWAP_EXPLICIT=true
                 shift
                 ;;
             --fail2ban-whitelist-url=*)
@@ -156,7 +162,8 @@ Optional:
                              (checks Gist or uses provider key if omitted)
   --ssh-port=PORT           SSH port (default: 33003)
   --deploy-user=USER        Deploy username (default: deploy)
-  --swap-size=SIZE          Swap size, e.g., 2G, 4G (default: 2G)
+  --swap-size=SIZE          Swap size, e.g., 2G, 4G (auto: 2G if RAM ≤8GB, none if >8GB)
+  --no-swap                 Disable swap regardless of RAM
   --fail2ban-whitelist-url=URL  Gist URL for IP whitelist (default: turgs gist)
   --canary-url=URL          CanaryTokens URL for reboot alerts
   --livepatch-token=TOKEN   Ubuntu Livepatch token
@@ -175,12 +182,15 @@ Examples:
   # SSH key from Gist (first ssh-* line)
   bash provision_vps.sh --fail2ban-whitelist-url="https://gist.../raw/"
 
-  # Full options
+  # Full options (small VPS)
   bash provision_vps.sh \
     --ssh-key="ssh-ed25519 AAAA..." \
     --ssh-port=33003 \
     --swap-size=4G \
     --canary-url="https://canarytokens.com/..."
+
+  # Bare metal / large server (no swap)
+  bash provision_vps.sh --ssh-key="ssh-ed25519 AAAA..." --no-swap
 
 Environment Variables (CLI args take priority):
   SSH_PUBLIC_KEY, SSH_PORT, DEPLOY_USER, SWAP_SIZE,
@@ -356,20 +366,30 @@ validate_inputs() {
     fi
     echo "✓ Deploy UID: $DEPLOY_UID (available)"
     
-    # Validate swap size format and disk space
-    # Skip swap on machines with >3GB RAM — swap masks memory problems on
-    # well-provisioned servers. On small VPS (≤3GB), swap is a necessary safety net.
+    # Swap: auto-detect unless explicitly set via --swap-size or --no-swap.
+    # ≤8GB RAM: swap is a necessary safety net for small VPS instances.
+    # >8GB RAM: swap masks memory problems — OOM-kill is a better signal.
     local total_ram_mb
     total_ram_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
-    if (( total_ram_mb > 3072 )); then
+
+    if [[ "$SWAP_SIZE" == "auto" ]]; then
+        if (( total_ram_mb > 8192 )); then
+            SKIP_SWAP=true
+            echo "✓ RAM: ${total_ram_mb}MB (>8GB) — skipping swap"
+        else
+            SKIP_SWAP=false
+            SWAP_SIZE="2G"
+            echo "✓ RAM: ${total_ram_mb}MB (≤8GB) — swap: $SWAP_SIZE"
+        fi
+    elif [[ "$SWAP_SIZE" == "none" ]]; then
         SKIP_SWAP=true
-        echo "✓ RAM: ${total_ram_mb}MB (>3GB) — skipping swap (not needed)"
+        echo "✓ RAM: ${total_ram_mb}MB — swap: disabled (--no-swap)"
     else
         SKIP_SWAP=false
         if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GM]$ ]]; then
             error "Invalid swap size format: $SWAP_SIZE (use: 2G or 2048M)"
         fi
-        echo "✓ RAM: ${total_ram_mb}MB (≤3GB) — swap: $SWAP_SIZE"
+        echo "✓ RAM: ${total_ram_mb}MB — swap: $SWAP_SIZE (explicit)"
     fi
     
     # Validate timezone
