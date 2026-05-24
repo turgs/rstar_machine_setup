@@ -1609,7 +1609,7 @@ configure_supermicro_fans() {
 # See: https://github.com/petersulyok/smfc
 
 [IPMI]
-command=ipmitool
+command=/usr/bin/ipmitool
 fan_mode_delay=2
 fan_level_delay=2
 
@@ -1629,15 +1629,18 @@ SMFCEOF
     
     echo "  ✓ smfc config created at /etc/smfc/smfc.conf"
     
+    # Find smfc binary — pipx installs to different locations
+    local SMFC_BIN=$(which smfc 2>/dev/null || echo "/usr/local/bin/smfc")
+    
     # Create systemd service
-    cat > /etc/systemd/system/smfc.service << 'SVCEOF'
+    cat > /etc/systemd/system/smfc.service << SVCEOF
 [Unit]
 Description=Supermicro Fan Control (smfc)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/smfc -c /etc/smfc/smfc.conf -l 3
+ExecStart=${SMFC_BIN} -c /etc/smfc/smfc.conf -l 3
 Restart=on-failure
 RestartSec=10
 
@@ -1652,7 +1655,7 @@ SVCEOF
     sleep 3
     if systemctl is-active --quiet smfc; then
         echo "  ✓ smfc running — fans now dynamically controlled by CPU temperature"
-        echo "    CPU 35°C → fans at 25%, CPU 70°C → fans at 100%"
+        echo "    CPU 35°C → fans at 15%, CPU 70°C → fans at 100%"
         echo "    Config: /etc/smfc/smfc.conf"
     else
         echo "  ⚠ smfc not running — falling back to static fan control via rc.local"
