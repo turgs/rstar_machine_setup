@@ -1,7 +1,8 @@
 #!/bin/bash
 #
-# provision_vps.sh - Ubuntu VPS Provisioning Script for Kamal 2
-# Designed for Binary Lane VPS running Ubuntu 22.04/24.04 LTS
+# provision_vps.sh - Server Provisioning Script for Kamal 2
+# Supports Ubuntu 22.04/24.04 LTS and Debian 12 (Bookworm)
+# Works on both VPS (BinaryLane, Vultr) and bare metal (Supermicro tower)
 #
 # Usage:
 #   bash provision_vps.sh --ssh-key="ssh-ed25519 AAAA..."
@@ -239,10 +240,15 @@ check_root() {
     fi
 }
 
-check_ubuntu() {
-    if ! grep -q "Ubuntu" /etc/os-release; then
-        error "This script is designed for Ubuntu"
+check_os() {
+    if grep -q "Ubuntu" /etc/os-release; then
+        OS_FAMILY="ubuntu"
+    elif grep -q "Debian" /etc/os-release; then
+        OS_FAMILY="debian"
+    else
+        error "This script supports Ubuntu and Debian only"
     fi
+    echo "  Detected OS: $OS_FAMILY"
 }
 
 check_service() {
@@ -1361,6 +1367,13 @@ setup_ubuntu_livepatch() {
         return
     fi
     
+    # Livepatch is Ubuntu-only — skip on Debian
+    if [[ "${OS_FAMILY:-}" == "debian" ]]; then
+        echo "⚠ Livepatch is Ubuntu-only, skipping on Debian"
+        mark_complete "setup_ubuntu_livepatch"
+        return
+    fi
+    
     log "Setting Up Ubuntu Livepatch"
     
     [[ -z "$UBUNTU_LIVEPATCH_TOKEN" ]] && { echo "⚠ No Livepatch token provided, skipping"; mark_complete "setup_ubuntu_livepatch"; return; }
@@ -1441,7 +1454,14 @@ configure_lan_ip() {
         return
     fi
     
-    log "Configuring Binary Lane Private Network IP"
+    # Skip on bare metal — private VPS networking doesn't apply
+    if [[ "$(systemd-detect-virt 2>/dev/null)" == "none" ]]; then
+        echo "⚠ Bare metal detected — skipping VPS private network config"
+        mark_complete "configure_lan_ip"
+        return
+    fi
+    
+    log "Configuring VPS Private Network IP"
     
     [[ -z "$LAN_IP" ]] && { echo "⚠ No LAN IP provided, skipping"; mark_complete "configure_lan_ip"; return; }
     
@@ -1457,8 +1477,9 @@ configure_lan_ip() {
     
     echo "  Using interface: $IFACE"
     
-    # Use netplan for modern Ubuntu
-    cat > /etc/netplan/60-private-network.yaml << EOF
+    if command -v netplan &>/dev/null; then
+        # Ubuntu — use netplan
+        cat > /etc/netplan/60-private-network.yaml << EOF
 network:
   version: 2
   ethernets:
@@ -1466,38 +1487,42 @@ network:
       addresses:
         - $LAN_IP/16
 EOF
-    
-    chmod 600 /etc/netplan/60-private-network.yaml
-    
-    # Backup existing netplan configs before making changes
-    mkdir -p /etc/netplan/backup
-    
-    # Save list of original config files for precise rollback
-    local ORIGINAL_CONFIGS=()
-    mapfile -t ORIGINAL_CONFIGS < <(find /etc/netplan -maxdepth 1 -name '*.yaml' -type f 2>/dev/null || true)
-    
-    # Create backup copies
-    for config in "${ORIGINAL_CONFIGS[@]}"; do
-        [[ -f "$config" ]] && cp "$config" /etc/netplan/backup/ 2>/dev/null || true
-    done
-    
-    # Test netplan config before applying
-    if ! netplan generate; then
-        error "Invalid netplan configuration generated"
-    fi
-    
-    # Apply with timeout and verification
-    if ! timeout 10 netplan apply 2>/dev/null; then
-        echo "⚠ WARNING: netplan apply timed out or failed, attempting rollback"
-        # Remove our new config
-        rm -f /etc/netplan/60-private-network.yaml
-        # Restore ONLY the original configs (not all backup files)
-        for orig_config in "${ORIGINAL_CONFIGS[@]}"; do
-            local basename_file=$(basename "$orig_config")
-            [[ -f "/etc/netplan/backup/$basename_file" ]] && cp "/etc/netplan/backup/$basename_file" "$orig_config" 2>/dev/null || true
+        chmod 600 /etc/netplan/60-private-network.yaml
+        
+        mkdir -p /etc/netplan/backup
+        local ORIGINAL_CONFIGS=()
+        mapfile -t ORIGINAL_CONFIGS < <(find /etc/netplan -maxdepth 1 -name '*.yaml' -type f 2>/dev/null || true)
+        
+        for config in "${ORIGINAL_CONFIGS[@]}"; do
+            [[ -f "$config" ]] && cp "$config" /etc/netplan/backup/ 2>/dev/null || true
         done
-        netplan apply 2>/dev/null || true
-        error "Failed to apply netplan configuration (rolled back)"
+        
+        if ! netplan generate; then
+            error "Invalid netplan configuration generated"
+        fi
+        
+        if ! timeout 10 netplan apply 2>/dev/null; then
+            echo "⚠ WARNING: netplan apply timed out or failed, attempting rollback"
+            rm -f /etc/netplan/60-private-network.yaml
+            for orig_config in "${ORIGINAL_CONFIGS[@]}"; do
+                local basename_file=$(basename "$orig_config")
+                [[ -f "/etc/netplan/backup/$basename_file" ]] && cp "/etc/netplan/backup/$basename_file" "$orig_config" 2>/dev/null || true
+            done
+            netplan apply 2>/dev/null || true
+            error "Failed to apply netplan configuration (rolled back)"
+        fi
+    else
+        # Debian — use /etc/network/interfaces
+        if ! grep -q "$LAN_IP" /etc/network/interfaces 2>/dev/null; then
+            cat >> /etc/network/interfaces << EOF
+
+# Private network (added by provision_vps.sh)
+auto $IFACE
+iface $IFACE inet static
+    address $LAN_IP/16
+EOF
+            ifup "$IFACE" 2>/dev/null || ip addr add "$LAN_IP/16" dev "$IFACE" 2>/dev/null || true
+        fi
     fi
     
     # Verify network still works after netplan changes (test multiple endpoints)
@@ -1771,7 +1796,7 @@ main() {
     
     # Pre-flight checks
     check_root
-    check_ubuntu
+    check_os
     
     # Show banner with commit info
     clear 2>/dev/null || true
