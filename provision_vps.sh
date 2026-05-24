@@ -1593,11 +1593,9 @@ configure_supermicro_fans() {
     # On service stop/crash, fans go to 100% (safe fallback)
     echo "  Installing smfc (dynamic fan control)..."
     
-    # Ensure python3-pip is available
-    apt-get install -y python3-pip python3-venv 2>/dev/null || true
-    
-    # Install smfc via pip
-    pip3 install smfc --break-system-packages 2>/dev/null || pip3 install smfc || true
+    # Install smfc via pipx (Debian 13+ blocks pip3 install as root)
+    apt-get install -y pipx 2>/dev/null || true
+    pipx install smfc 2>/dev/null || pip3 install smfc --break-system-packages 2>/dev/null || true
     
     # Load coretemp kernel module (Intel CPU temp sensor)
     modprobe coretemp 2>/dev/null || true
