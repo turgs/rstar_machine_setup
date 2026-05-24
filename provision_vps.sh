@@ -1612,7 +1612,7 @@ fan_level_delay=2
 
 [CPU]
 enabled=1
-ipmi_zone=0
+ipmi_zone=0,1
 temp_calc=1
 steps=6
 sensitivity=3.0
