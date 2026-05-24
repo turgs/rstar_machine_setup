@@ -1553,10 +1553,7 @@ EOF
 }
 
 configure_supermicro_fans() {
-    if is_complete "configure_supermicro_fans"; then
-        echo "⚠ Supermicro fan control already configured, skipping"
-        return
-    fi
+    # Always re-run — fan config is safe to repeat and should self-correct
     
     # Auto-detect Supermicro X10-X13 boards — skip silently on VPS/cloud/other hardware
     local BOARD_MFR=$(dmidecode -s baseboard-manufacturer 2>/dev/null || true)
