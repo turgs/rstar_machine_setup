@@ -79,6 +79,7 @@ ENABLE_CANARY_TOKEN="${ENABLE_CANARY_TOKEN:-false}"
 CANARYTOKEN_URL="${CANARYTOKEN_URL:-}"
 UBUNTU_LIVEPATCH_TOKEN="${UBUNTU_LIVEPATCH_TOKEN:-}"
 LAN_IP="${LAN_IP:-}"
+TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
 
 # Docker
 DOCKER_VERSION="${DOCKER_VERSION:-latest}"
@@ -133,6 +134,10 @@ parse_args() {
                 ENABLE_FAIL2BAN="false"
                 shift
                 ;;
+            --tunnel-token=*)
+                TUNNEL_TOKEN="${1#*=}"
+                shift
+                ;;
             --no-reboot)
                 AUTO_REBOOT="false"
                 shift
@@ -168,6 +173,8 @@ Optional:
   --canary-url=URL          CanaryTokens URL for reboot alerts
   --livepatch-token=TOKEN   Ubuntu Livepatch token
   --lan-ip=IP               Binary Lane private network IP
+  --tunnel-token=TOKEN      Cloudflare Tunnel token (from Zero Trust dashboard)
+                             Installs cloudflared, skips opening ports 80/443
   --no-fail2ban             Disable fail2ban installation
   --no-reboot               Skip automatic reboot after provisioning
   --help, -h                Show this help message
@@ -800,9 +807,14 @@ configure_firewall() {
     echo "  Adding SSH rule for port $SSH_PORT..."
     ufw allow "$SSH_PORT/tcp" comment 'SSH'
     
-    # Allow HTTP/HTTPS for Kamal
-    ufw allow 80/tcp comment 'HTTP'
-    ufw allow 443/tcp comment 'HTTPS'
+    # Allow HTTP/HTTPS only when NOT using a Cloudflare Tunnel
+    # With a tunnel, all inbound web traffic comes through cloudflared (outbound-only)
+    if [[ -z "$TUNNEL_TOKEN" ]]; then
+        ufw allow 80/tcp comment 'HTTP'
+        ufw allow 443/tcp comment 'HTTPS'
+    else
+        echo "  Skipping ports 80/443 — Cloudflare Tunnel handles inbound traffic"
+    fi
     
     # Show rules before enabling
     echo "  Rules to be enabled:"
@@ -821,8 +833,12 @@ configure_firewall() {
     
     echo "✓ Firewall configured"
     echo "  - Port $SSH_PORT: SSH"
-    echo "  - Port 80: HTTP"
-    echo "  - Port 443: HTTPS"
+    if [[ -z "$TUNNEL_TOKEN" ]]; then
+        echo "  - Port 80: HTTP"
+        echo "  - Port 443: HTTPS"
+    else
+        echo "  - Ports 80/443: closed (tunnel mode)"
+    fi
     
     mark_complete "configure_firewall"
 }
@@ -1235,6 +1251,66 @@ EOF
     mark_complete "install_docker"
 }
 
+install_cloudflared() {
+    if is_complete "install_cloudflared"; then
+        echo "⚠ cloudflared already installed, skipping"
+        return
+    fi
+    
+    if [[ -z "$TUNNEL_TOKEN" ]]; then
+        echo "⚠ No tunnel token provided, skipping cloudflared install"
+        return
+    fi
+    
+    log "Installing Cloudflare Tunnel (cloudflared)"
+    
+    # Install from Cloudflare's official apt repository
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+        | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+    
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \
+        | tee /etc/apt/sources.list.d/cloudflared.list
+    
+    apt-get update -qq
+    apt-get install -y -qq cloudflared
+    
+    # Create systemd service that runs the tunnel with the token
+    cat > /etc/systemd/system/cloudflared-tunnel.service << EOF
+[Unit]
+Description=Cloudflare Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=0
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    systemctl daemon-reload
+    systemctl enable cloudflared-tunnel
+    systemctl start cloudflared-tunnel
+    
+    # Verify it started
+    sleep 3
+    if systemctl is-active --quiet cloudflared-tunnel; then
+        echo "✓ cloudflared installed and running"
+        echo "  - Auto-restart on failure (5s delay)"
+        echo "  - Auto-updates disabled (use apt upgrade)"
+    else
+        echo "⚠ cloudflared installed but not yet healthy (check token and CF dashboard)"
+        echo "  Logs: journalctl -u cloudflared-tunnel -f"
+    fi
+    
+    mark_complete "install_cloudflared"
+}
+
 configure_sysctl() {
     if is_complete "configure_sysctl"; then
         echo "⚠ System parameters already configured, skipping"
@@ -1559,9 +1635,18 @@ verify_setup() {
     
     # Check swap
     if [[ "$SKIP_SWAP" == "true" ]]; then
-        ! swapon --show | grep -q '/swapfile' && echo "  ✓ Swap skipped (RAM >3GB)"
+        ! swapon --show | grep -q '/swapfile' && echo "  ✓ Swap skipped (RAM >8GB)"
     else
         swapon --show | grep -q '/swapfile' && echo "  ✓ Swap active"
+    fi
+    
+    # Check cloudflared
+    if [[ -n "$TUNNEL_TOKEN" ]]; then
+        if systemctl is-active --quiet cloudflared-tunnel 2>/dev/null; then
+            echo "  ✓ cloudflared tunnel running"
+        else
+            echo "  ⚠ cloudflared tunnel not running"
+        fi
     fi
     
     echo ""
@@ -1671,6 +1756,7 @@ EOF
     configure_unattended_upgrades
     create_swap
     install_docker
+    install_cloudflared
     configure_sysctl
     setup_log_rotation
     setup_ubuntu_livepatch
