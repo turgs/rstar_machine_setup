@@ -1572,18 +1572,22 @@ configure_supermicro_fans() {
         apt-get install -y ipmitool
     fi
     
-    # Lower alarm thresholds for tower fans (Noctua 800-1500 RPM)
-    # Values: LNR=0 LCR=100 LNC=200 RPM — verified from smfc project
-    for fan in FAN1 FAN2 FAN3 FAN4 FAN5 FANA FANB; do
-        ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
+    # Lower alarm thresholds for connected tower fans (Noctua 800-1500 RPM)
+    # Only set on connected fans — "na" fans don't trigger assertions
+    # Values: LNR=0 LCR=50 LNC=100 RPM — low enough for 35% duty cycle
+    for fan in FAN1 FANA FANB; do
+        ipmitool sensor thresh "$fan" lower 0 50 100 2>/dev/null || true
     done
     echo "  ✓ Fan alarm thresholds lowered for tower operation"
     
+    # Clear BMC assertion events — stale assertions cause BMC to override fan levels
+    ipmitool sel clear 2>/dev/null || true
+    
     # Quiet fans immediately while smfc installs
     ipmitool raw 0x30 0x45 0x01 0x01
-    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x32
-    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x1E
-    echo "  ✓ Fans set to 50%/30% temporarily"
+    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x23
+    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x23
+    echo "  ✓ Fans set to 35% temporarily"
     
     # Install smfc — dynamic temperature-based fan control
     # Fans speed up when CPU is hot, slow down when cool
@@ -1607,20 +1611,25 @@ configure_supermicro_fans() {
 
 [Ipmi]
 command=/usr/bin/ipmitool
-fan_mode_delay=10
-fan_level_delay=2
+fan_mode_delay=15
+fan_level_delay=3
 
 [CPU]
 enabled=1
-ipmi_zone=0,1
+ipmi_zone=0
 temp_calc=1
 steps=6
 sensitivity=3.0
-polling=2
+polling=5
 min_temp=30.0
 max_temp=60.0
-min_level=15
+min_level=35
 max_level=100
+
+[CONST]
+enabled=1
+ipmi_zone=1
+level=35
 
 [HD]
 enabled=0
@@ -1654,7 +1663,7 @@ SVCEOF
     sleep 3
     if systemctl is-active --quiet smfc; then
         echo "  ✓ smfc running — fans now dynamically controlled by CPU temperature"
-        echo "    CPU 35°C → fans at 15%, CPU 70°C → fans at 100%"
+        echo "    CPU 30°C → fans at 35%, CPU 60°C → fans at 100%"
         echo "    Config: /etc/smfc/smfc.conf"
     else
         echo "  ⚠ smfc not running — falling back to static fan control via rc.local"
@@ -1664,11 +1673,13 @@ SVCEOF
 # Supermicro fan control fallback — applied by provision_vps.sh
 sleep 30
 ipmitool raw 0x30 0x45 0x01 0x01
-ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x32
-ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x1E
-for fan in FAN1 FAN2 FAN3 FAN4 FAN5 FANA FANB; do
-    ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
+ipmitool sel clear
+for fan in FAN1 FANA FANB; do
+    ipmitool sensor thresh "$fan" lower 0 50 100 2>/dev/null || true
 done
+sleep 2
+ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x23
+ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x23
 FANEOF
         chmod +x /etc/rc.local
         echo "  ✓ Static fallback saved to /etc/rc.local"
