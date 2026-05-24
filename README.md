@@ -1,8 +1,8 @@
 # rstar_machine_setup
 
-**Ubuntu VPS Provisioning for Kamal 2 Deployments**
+**Server Provisioning for Kamal 2 Deployments**
 
-Automated, non-interactive script to provision Binary Lane (or any) Ubuntu VPS for production Ruby on Rails deployments using Kamal 2.
+Automated, non-interactive script to provision Ubuntu or Debian servers for production Ruby on Rails deployments using Kamal 2. Works on both VPS (BinaryLane, Vultr) and bare metal (e.g. Supermicro tower).
 
 ---
 
@@ -57,6 +57,14 @@ That's it! Your server will be fully configured and reboot automatically.
 - ✅ **Automatic Security Updates**
   - Unattended upgrades enabled
   - Auto-reboot disabled (Kamal-friendly)
+  - Works on both Ubuntu and Debian (auto-detects origins)
+
+### Hardware-Specific
+- ✅ **Supermicro X11 Fan Control** (auto-detected)
+  - Configures IPMI fan thresholds for quiet tower operation
+  - Sets duty cycle for Noctua fans (800-1500 RPM)
+  - Persists across reboots via /etc/rc.local
+  - Skips silently on VPS/cloud/non-Supermicro hardware
 
 ### System
 - ✅ **Deploy User**
@@ -147,8 +155,8 @@ The script works with zero arguments (uses provider SSH keys).
 - `--swap-size=SIZE` - Swap size: 2G, 4G, 8G (default: `2G`)
 - `--fail2ban-whitelist-url=URL` - Gist URL for IP whitelist (default: turgs' Gist)
 - `--canary-url=URL` - CanaryTokens URL for reboot alerts
-- `--livepatch-token=TOKEN` - Ubuntu Livepatch token
-- `--lan-ip=IP` - Binary Lane private network IP
+- `--livepatch-token=TOKEN` - Ubuntu Livepatch token (Ubuntu only, ignored on Debian)
+- `--lan-ip=IP` - VPS private network IP (skipped on bare metal)
 - `--no-fail2ban` - Disable fail2ban installation
 - `--no-reboot` - Skip automatic reboot (manual reboot required)
 - `--help`, `-h` - Show help message
@@ -475,6 +483,13 @@ curl -fsSL https://gist.githubusercontent.com/turgs/6d471a01fa901146c0ed9e2138f7
 /swapfile                                      # Swap file
 ```
 
+### Supported Platforms
+- **Ubuntu** 22.04 / 24.04 LTS (VPS or bare metal)
+- **Debian** 12 Bookworm (VPS or bare metal)
+- Auto-detects OS and adjusts (Livepatch skipped on Debian, netplan vs interfaces, etc.)
+- Auto-detects bare metal vs VPS (skips VPS-specific networking on bare metal)
+- Auto-detects Supermicro X11 hardware (configures IPMI fan control)
+
 ---
 
 ## 🔄 Comparison with Old Scripts
@@ -573,8 +588,8 @@ MIT License - Use freely for your projects
 
 ## 🙏 Credits
 
-Built for Ruby on Rails deployments with Kamal 2 on Binary Lane VPS infrastructure.
+Built for Ruby on Rails deployments with Kamal 2 on Ubuntu/Debian servers — VPS (BinaryLane, Vultr) or bare metal (Supermicro tower).
 
 **Author:** Tim Burgan (@turgs)  
-**Date:** November 2025  
-**Version:** 1.0
+**Date:** November 2025 (updated May 2026 — Debian 12 + bare metal support)  
+**Version:** 1.1
