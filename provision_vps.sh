@@ -1619,7 +1619,7 @@ ipmi_zone=0
 temp_calc=max
 min_temp=35
 max_temp=70
-min_level=25
+min_level=15
 max_level=100
 polling=5
 
