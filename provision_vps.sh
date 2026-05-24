@@ -1274,7 +1274,7 @@ install_cloudflared() {
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
         | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
     
-    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
         | tee /etc/apt/sources.list.d/cloudflared.list
     
     apt-get update -qq
