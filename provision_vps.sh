@@ -1527,6 +1527,65 @@ EOF
     mark_complete "configure_lan_ip"
 }
 
+configure_supermicro_fans() {
+    if is_complete "configure_supermicro_fans"; then
+        echo "⚠ Supermicro fan control already configured, skipping"
+        return
+    fi
+    
+    # Auto-detect Supermicro X11 boards — skip silently on VPS/cloud/other hardware
+    local BOARD_MFR=$(dmidecode -s baseboard-manufacturer 2>/dev/null || true)
+    local BOARD_NAME=$(dmidecode -s baseboard-product-name 2>/dev/null || true)
+    
+    if ! echo "$BOARD_MFR" | grep -qi supermicro || ! echo "$BOARD_NAME" | grep -qi "X11"; then
+        echo "⚠ Not a Supermicro X11 board (${BOARD_MFR:-unknown} / ${BOARD_NAME:-unknown}), skipping fan control"
+        mark_complete "configure_supermicro_fans"
+        return
+    fi
+    
+    log "Configuring Supermicro X11 Fan Control (${BOARD_NAME})"
+    
+    # Install ipmitool if not present
+    if ! command -v ipmitool &>/dev/null; then
+        apt-get install -y ipmitool
+    fi
+    
+    # Apply fan settings now
+    # Set FULL mode — hands PWM control to us (BMC stops auto-managing)
+    ipmitool raw 0x30 0x45 0x01 0x01
+    # Zone 0 (FAN1-4, CPU area) at 50% duty cycle
+    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x32
+    # Zone 1 (FANA/FANB, peripheral) at 30% duty cycle
+    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x1E
+    
+    # Lower alarm thresholds for tower fans (Noctua 800-1500 RPM)
+    # Values: LNR=0 LCR=100 LNC=200 RPM — verified from smfc project
+    for fan in FAN1 FAN2 FAN3 FAN4 FAN5 FANA FANB; do
+        ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
+    done
+    
+    echo "  ✓ Fan mode set to FULL with 50%/30% duty cycle"
+    echo "  ✓ Fan alarm thresholds lowered for tower operation"
+    
+    # Make settings persist across reboots
+    cat > /etc/rc.local << 'FANEOF'
+#!/bin/bash
+# Supermicro X11 fan control — applied by provision_vps.sh
+# Settings don't survive BMC reset, so re-apply on every boot
+sleep 30
+ipmitool raw 0x30 0x45 0x01 0x01
+ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x32
+ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x1E
+for fan in FAN1 FAN2 FAN3 FAN4 FAN5 FANA FANB; do
+    ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
+done
+FANEOF
+    chmod +x /etc/rc.local
+    
+    echo "  ✓ Fan settings will persist across reboots (/etc/rc.local)"
+    mark_complete "configure_supermicro_fans"
+}
+
 verify_ssh_connectivity() {
     log "Verifying SSH Configuration"
     
@@ -1762,6 +1821,7 @@ EOF
     setup_ubuntu_livepatch
     setup_canary_token
     configure_lan_ip
+    configure_supermicro_fans
     
     # Verify everything worked
     verify_setup
