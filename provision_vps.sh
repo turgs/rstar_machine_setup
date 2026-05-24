@@ -1605,23 +1605,25 @@ configure_supermicro_fans() {
 # Dynamic fan control for Supermicro tower conversion with Noctua fans
 # See: https://github.com/petersulyok/smfc
 
-[IPMI]
+[Ipmi]
 command=/usr/bin/ipmitool
-fan_mode_delay=2
+fan_mode_delay=10
 fan_level_delay=2
 
 [CPU]
-enabled=true
+enabled=1
 ipmi_zone=0
-temp_calc=max
-min_temp=35
-max_temp=70
+temp_calc=1
+steps=6
+sensitivity=3.0
+polling=2
+min_temp=30.0
+max_temp=60.0
 min_level=15
 max_level=100
-polling=5
 
 [HD]
-enabled=false
+enabled=0
 SMFCEOF
     
     echo "  ✓ smfc config created at /etc/smfc/smfc.conf"
