@@ -1572,22 +1572,30 @@ configure_supermicro_fans() {
         apt-get install -y ipmitool
     fi
     
-    # Lower alarm thresholds for connected tower fans (Noctua 800-1500 RPM)
-    # Only set on connected fans — "na" fans don't trigger assertions
-    # Values: LNR=0 LCR=50 LNC=100 RPM — low enough for 35% duty cycle
+    # Lower alarm thresholds for connected tower fans
     for fan in FAN1 FANA FANB; do
-        ipmitool sensor thresh "$fan" lower 0 50 100 2>/dev/null || true
+        ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
     done
-    echo "  ✓ Fan alarm thresholds lowered for tower operation"
+    # Set disconnected fan thresholds to 0/0/0 to prevent ghost assertions
+    for n in 2 3 4 5; do
+        ipmitool sensor thresh "FAN${n}" lower 0 0 0 2>/dev/null || true
+    done
+    echo "  ✓ Fan alarm thresholds configured"
     
-    # Clear BMC assertion events — stale assertions cause BMC to override fan levels
+    # BMC cold reset — makes threshold changes stick and clears assertion state
+    echo "  BMC cold reset (90s wait)..."
+    ipmitool mc reset cold 2>/dev/null || true
+    sleep 90
+    
+    # Re-establish FULL mode after BMC reset
+    ipmitool raw 0x30 0x45 0x01 0x01
     ipmitool sel clear 2>/dev/null || true
+    sleep 3
     
     # Quiet fans immediately while smfc installs
-    ipmitool raw 0x30 0x45 0x01 0x01
-    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x0F
-    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x0F
-    echo "  ✓ Fans set to 15% temporarily"
+    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x1E
+    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x1E
+    echo "  ✓ Fans set to 30% temporarily"
     
     # Install smfc — dynamic temperature-based fan control
     # Fans speed up when CPU is hot, slow down when cool
@@ -1623,13 +1631,13 @@ sensitivity=3.0
 polling=5
 min_temp=30.0
 max_temp=60.0
-min_level=15
+min_level=30
 max_level=100
 
 [CONST]
 enabled=1
 ipmi_zone=1
-level=15
+level=30
 
 [HD]
 enabled=0
@@ -1682,11 +1690,14 @@ sleep 30
 ipmitool raw 0x30 0x45 0x01 0x01
 ipmitool sel clear
 for fan in FAN1 FANA FANB; do
-    ipmitool sensor thresh "$fan" lower 0 50 100 2>/dev/null || true
+    ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
+done
+for n in 2 3 4 5; do
+    ipmitool sensor thresh "FAN${n}" lower 0 0 0 2>/dev/null || true
 done
 sleep 2
-ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x0F
-ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x0F
+ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x1E
+ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x1E
 FANEOF
         chmod +x /etc/rc.local
         echo "  ✓ Static fallback saved to /etc/rc.local"
