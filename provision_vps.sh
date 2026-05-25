@@ -1585,9 +1585,9 @@ configure_supermicro_fans() {
     
     # Quiet fans immediately while smfc installs
     ipmitool raw 0x30 0x45 0x01 0x01
-    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x23
-    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x23
-    echo "  ✓ Fans set to 35% temporarily"
+    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x0F
+    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x0F
+    echo "  ✓ Fans set to 15% temporarily"
     
     # Install smfc — dynamic temperature-based fan control
     # Fans speed up when CPU is hot, slow down when cool
@@ -1623,13 +1623,13 @@ sensitivity=3.0
 polling=5
 min_temp=30.0
 max_temp=60.0
-min_level=35
+min_level=15
 max_level=100
 
 [CONST]
 enabled=1
 ipmi_zone=1
-level=35
+level=15
 
 [HD]
 enabled=0
@@ -1678,8 +1678,8 @@ for fan in FAN1 FANA FANB; do
     ipmitool sensor thresh "$fan" lower 0 50 100 2>/dev/null || true
 done
 sleep 2
-ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x23
-ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x23
+ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x0F
+ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x0F
 FANEOF
         chmod +x /etc/rc.local
         echo "  ✓ Static fallback saved to /etc/rc.local"
