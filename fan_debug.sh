@@ -1,5 +1,5 @@
 #!/bin/bash
-# fan_debug.sh — fix fans with BMC cold reset + safe minimum levels
+# fan_debug.sh — fix fans with BMC cold reset + test hold
 set -euo pipefail
 echo "=== FAN FIX $(date) ==="
 echo ""
@@ -7,17 +7,16 @@ echo ""
 echo "1. Stopping smfc..."
 systemctl stop smfc 2>/dev/null || true
 
-echo "2. Setting thresholds on connected fans..."
+echo "2. Setting thresholds on connected fans (FAN1, FANA)..."
 ipmitool sensor thresh FAN1 lower 0 100 200 2>/dev/null || true
 ipmitool sensor thresh FANA lower 0 100 200 2>/dev/null || true
-ipmitool sensor thresh FANB lower 0 100 200 2>/dev/null || true
 
-echo "3. Setting disconnected fan thresholds to 0/0/0..."
-for n in 2 3 4 5; do
-    ipmitool sensor thresh FAN${n} lower 0 0 0 2>/dev/null || true
+echo "3. Disabling thresholds on disconnected fans (FAN2-5, FANB)..."
+for fan in FAN2 FAN3 FAN4 FAN5 FANB; do
+    ipmitool sensor thresh "$fan" lower 0 0 0 2>/dev/null || true
 done
 
-echo "4. BMC cold reset (takes ~90 seconds)..."
+echo "4. BMC cold reset (90s wait)..."
 ipmitool mc reset cold
 echo "   Waiting 90s for BMC to restart..."
 sleep 90
@@ -52,7 +51,7 @@ for s in 10 20 30 45 60; do
     echo "--- ${s}s ---"
     sleep 10
     if ! check_fans; then
-        echo "=== FAILED at ${s}s even after BMC reset ==="
+        echo "=== FAILED at ${s}s ==="
         exit 1
     fi
 done

@@ -1573,12 +1573,12 @@ configure_supermicro_fans() {
     fi
     
     # Lower alarm thresholds for connected tower fans
-    for fan in FAN1 FANA FANB; do
+    for fan in FAN1 FANA; do
         ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
     done
     # Set disconnected fan thresholds to 0/0/0 to prevent ghost assertions
-    for n in 2 3 4 5; do
-        ipmitool sensor thresh "FAN${n}" lower 0 0 0 2>/dev/null || true
+    for fan in FAN2 FAN3 FAN4 FAN5 FANB; do
+        ipmitool sensor thresh "$fan" lower 0 0 0 2>/dev/null || true
     done
     echo "  ✓ Fan alarm thresholds configured"
     
@@ -1689,11 +1689,11 @@ SVCEOF
 sleep 30
 ipmitool raw 0x30 0x45 0x01 0x01
 ipmitool sel clear
-for fan in FAN1 FANA FANB; do
+for fan in FAN1 FANA; do
     ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
 done
-for n in 2 3 4 5; do
-    ipmitool sensor thresh "FAN${n}" lower 0 0 0 2>/dev/null || true
+for fan in FAN2 FAN3 FAN4 FAN5 FANB; do
+    ipmitool sensor thresh "$fan" lower 0 0 0 2>/dev/null || true
 done
 sleep 2
 ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x1E
