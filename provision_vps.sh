@@ -1657,13 +1657,20 @@ WantedBy=multi-user.target
 SVCEOF
     
     systemctl daemon-reload
+    systemctl stop smfc 2>/dev/null || true
     systemctl enable smfc
+    
+    # Clear assertions and set FULL mode BEFORE starting smfc
+    ipmitool raw 0x30 0x45 0x01 0x01
+    ipmitool sel clear 2>/dev/null || true
+    sleep 2
+    
     systemctl start smfc 2>/dev/null || echo "  ⚠ smfc failed to start — check: journalctl -u smfc"
     
-    sleep 3
+    sleep 10
     if systemctl is-active --quiet smfc; then
         echo "  ✓ smfc running — fans now dynamically controlled by CPU temperature"
-        echo "    CPU 30°C → fans at 35%, CPU 60°C → fans at 100%"
+        echo "    CPU 30°C → fans at 15%, CPU 60°C → fans at 100%"
         echo "    Config: /etc/smfc/smfc.conf"
     else
         echo "  ⚠ smfc not running — falling back to static fan control via rc.local"
