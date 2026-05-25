@@ -1954,6 +1954,7 @@ EOF
     
     # Reboot (optional)
     if [[ "$AUTO_REBOOT" == "true" ]]; then
+        echo -e "\a\a\a"
         log "Rebooting in 10 seconds..."
         echo "Press Ctrl+C to cancel"
         sleep 10
