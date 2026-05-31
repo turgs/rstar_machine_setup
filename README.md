@@ -485,7 +485,7 @@ curl -fsSL https://gist.githubusercontent.com/turgs/6d471a01fa901146c0ed9e2138f7
 
 ### Supported Platforms
 - **Ubuntu** 22.04 / 24.04 LTS (VPS or bare metal)
-- **Debian** 12 Bookworm (VPS or bare metal)
+- **Debian** 12 Bookworm / 13 Trixie (VPS or bare metal)
 - Auto-detects OS and adjusts (Livepatch skipped on Debian, netplan vs interfaces, etc.)
 - Auto-detects bare metal vs VPS (skips VPS-specific networking on bare metal)
 - Auto-detects Supermicro X11 hardware (configures IPMI fan control)
@@ -591,5 +591,5 @@ MIT License - Use freely for your projects
 Built for Ruby on Rails deployments with Kamal 2 on Ubuntu/Debian servers — VPS (BinaryLane, Vultr) or bare metal (Supermicro tower).
 
 **Author:** Tim Burgan (@turgs)  
-**Date:** November 2025 (updated May 2026 — Debian 12 + bare metal support)  
+**Date:** November 2025 (updated May 2026 — Debian 12/13 + bare metal support)  
 **Version:** 1.1

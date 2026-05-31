@@ -497,7 +497,7 @@ update_system() {
     
     # Install essential tools
     echo "Installing essential tools (this may take a minute)..."
-    if ! APT_OUTPUT=$(apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release 2>&1); then
+    if ! APT_OUTPUT=$(apt-get -yq install curl wget git vim ufw fail2ban logrotate ca-certificates gnupg lsb-release dmidecode 2>&1); then
         echo ""
         echo "ERROR: Failed to install essential tools with output:"
         echo "----------------------------------------"
@@ -955,15 +955,10 @@ action = %(action_)s
 
 [sshd]
 enabled = true
+mode = aggressive
 port = $SSH_PORT
 logpath = %(sshd_log)s
 maxretry = $FAIL2BAN_MAXRETRY
-
-[sshd-ddos]
-enabled = true
-port = $SSH_PORT
-logpath = %(sshd_log)s
-maxretry = 10
 
 [recidive]
 enabled = true
@@ -1271,10 +1266,14 @@ install_cloudflared() {
     log "Installing Cloudflare Tunnel (cloudflared)"
     
     # Install from Cloudflare's official apt repository
+    # Use 'any' dist — Cloudflare's recommendation for all Debian/Ubuntu versions
+    # (no trixie-specific dist exists; cloudflared is a static Go binary so 'any' works everywhere)
+    # New GPG key rolled Oct 30, 2025 — old key expired Apr 30, 2026
+    mkdir -p --mode=0755 /usr/share/keyrings
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
         | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
     
-    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
         | tee /etc/apt/sources.list.d/cloudflared.list
     
     apt-get update -qq
@@ -1602,9 +1601,10 @@ configure_supermicro_fans() {
     # On service stop/crash, fans go to 100% (safe fallback)
     echo "  Installing smfc (dynamic fan control)..."
     
-    # Install smfc via pipx (Debian 13+ blocks pip3 install as root)
-    apt-get install -y pipx 2>/dev/null || true
-    pipx install smfc 2>/dev/null || pip3 install smfc --break-system-packages 2>/dev/null || true
+    # Install smfc via pip — upstream's own install method (bin/install.sh)
+    # Installs to /usr/local/bin/smfc which is on systemd's default PATH
+    # --break-system-packages needed on Debian 12+/13+ (PEP 668)
+    pip3 install -q --root-user-action=ignore --break-system-packages smfc 2>/dev/null || true
     
     # Load coretemp kernel module (Intel CPU temp sensor)
     modprobe coretemp 2>/dev/null || true
@@ -1645,18 +1645,15 @@ SMFCEOF
     
     echo "  ✓ smfc config created at /etc/smfc/smfc.conf"
     
-    # Find smfc binary — pipx installs to different locations
-    local SMFC_BIN=$(which smfc 2>/dev/null || echo "/usr/local/bin/smfc")
-    
-    # Create systemd service
-    cat > /etc/systemd/system/smfc.service << SVCEOF
+    # Create systemd service — use absolute path, don't rely on `which`
+    cat > /etc/systemd/system/smfc.service << 'SVCEOF'
 [Unit]
 Description=Supermicro Fan Control (smfc)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${SMFC_BIN} -c /etc/smfc/smfc.conf -l 3
+ExecStart=/usr/local/bin/smfc -c /etc/smfc/smfc.conf -l 3
 Restart=on-failure
 RestartSec=10
 
