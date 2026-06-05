@@ -1653,6 +1653,9 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=/usr/bin/ipmitool raw 0x30 0x45 0x01 0x01
+ExecStartPre=/usr/bin/ipmitool sel clear
+ExecStartPre=/bin/sleep 3
 ExecStart=/usr/local/bin/smfc -c /etc/smfc/smfc.conf -l 3
 Restart=on-failure
 RestartSec=10
