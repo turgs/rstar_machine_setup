@@ -51,6 +51,7 @@ That's it! Your server will be fully configured and reboot automatically.
 
 - ✅ **UFW Firewall**
   - Ports 33003 (SSH), 80 (HTTP), 443 (HTTPS)
+  - With `--tunnel-token`: only port 33003 (SSH) — 80/443 stay closed
   - Default deny incoming
   - Default allow outgoing
 
@@ -157,6 +158,7 @@ The script works with zero arguments (uses provider SSH keys).
 - `--canary-url=URL` - CanaryTokens URL for reboot alerts
 - `--livepatch-token=TOKEN` - Ubuntu Livepatch token (Ubuntu only, ignored on Debian)
 - `--lan-ip=IP` - VPS private network IP (skipped on bare metal)
+- `--tunnel-token=TOKEN` - Cloudflare Tunnel token (from Zero Trust dashboard). Installs cloudflared and keeps ports 80/443 closed in UFW — all web traffic arrives via the tunnel instead.
 - `--no-fail2ban` - Disable fail2ban installation
 - `--no-reboot` - Skip automatic reboot (manual reboot required)
 - `--help`, `-h` - Show help message
@@ -228,6 +230,52 @@ sudo fail2ban-client status sshd
 
 # View ban log
 sudo journalctl -u fail2ban -f
+```
+
+---
+
+## ☁️ Cloudflare Tunnel
+
+Use `--tunnel-token` to serve web traffic through a Cloudflare Tunnel instead of opening ports 80/443. This is ideal for servers behind NAT/firewall — no port forwarding or static IP needed.
+
+### How it works
+
+1. cloudflared makes an **outbound** connection to Cloudflare's edge
+2. Cloudflare routes traffic to your server via that connection
+3. No inbound ports needed for HTTP/HTTPS — only SSH (33003) is open
+
+### Setup
+
+1. **Create a tunnel** in [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → Networks → Tunnels
+2. **Copy the token** — you do NOT need to add Public Hostnames yet
+3. **Run provisioning with the token:**
+   ```bash
+   ssh root@YOUR_SERVER_IP 'bash -s' < <(curl -fsSL https://raw.githubusercontent.com/turgs/rstar_machine_setup/master/provision_vps.sh) \
+     --ssh-key="$(cat ~/.ssh/id_ed25519.pub)" \
+     --tunnel-token="YOUR_TOKEN" \
+     --no-reboot
+   ```
+4. **Verify** — the connector shows "Connected" in Zero Trust dashboard
+5. **Add Public Hostnames later** when you're ready to route traffic (e.g. `example.com → http://localhost:80`)
+
+Until you add hostnames in Cloudflare, no traffic reaches the server. This means you can provision and test without affecting production DNS.
+
+### What changes with `--tunnel-token`
+
+| Without token | With token |
+|---|---|
+| UFW opens 80, 443, 33003 | UFW opens only 33003 |
+| No cloudflared installed | cloudflared installed + running as systemd service |
+| Direct HTTP/HTTPS to server | All web traffic via Cloudflare Tunnel |
+
+### Verify tunnel status
+
+```bash
+# Check service is running
+systemctl status cloudflared-tunnel
+
+# View logs
+journalctl -u cloudflared-tunnel -f
 ```
 
 ---
@@ -343,8 +391,8 @@ sudo journalctl -xe
 
 ### Firewall Rules
 - **Port 33003:** SSH (custom port reduces bot noise by ~95%)
-- **Port 80:** HTTP (for Kamal proxy)
-- **Port 443:** HTTPS (for Kamal proxy)
+- **Port 80:** HTTP (for Kamal proxy) — skipped when using `--tunnel-token`
+- **Port 443:** HTTPS (for Kamal proxy) — skipped when using `--tunnel-token`
 - **Default:** Deny all other incoming
 
 ---
