@@ -816,10 +816,11 @@ configure_firewall() {
     # Allow HTTP/HTTPS only when NOT using a Cloudflare Tunnel
     # With a tunnel, all inbound web traffic comes through cloudflared (outbound-only)
     if [[ -z "$TUNNEL_TOKEN" ]]; then
+        echo "  No tunnel token — opening ports 80/443 for direct web traffic"
         ufw allow 80/tcp comment 'HTTP'
         ufw allow 443/tcp comment 'HTTPS'
     else
-        echo "  Skipping ports 80/443 — Cloudflare Tunnel handles inbound traffic"
+        echo "  Tunnel token present — skipping ports 80/443 (Cloudflare Tunnel handles inbound)"
     fi
     
     # Show rules before enabling
@@ -1653,9 +1654,14 @@ After=network.target
 
 [Service]
 Type=simple
+# Boot-race fix: BMC starts in Standard mode and may assert before smfc runs.
+# Set FULL mode, clear SEL, wait for BMC to settle, then force both zones to 20%
+# BEFORE smfc starts — this eliminates the window where BMC can override.
 ExecStartPre=/usr/bin/ipmitool raw 0x30 0x45 0x01 0x01
 ExecStartPre=/usr/bin/ipmitool sel clear
-ExecStartPre=/bin/sleep 3
+ExecStartPre=/bin/sleep 5
+ExecStartPre=/usr/bin/ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x14
+ExecStartPre=/usr/bin/ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x14
 ExecStart=/usr/local/bin/smfc -c /etc/smfc/smfc.conf -l 3
 Restart=on-failure
 RestartSec=10
