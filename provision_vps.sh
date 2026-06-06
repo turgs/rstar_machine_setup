@@ -1654,17 +1654,69 @@ After=network.target
 
 [Service]
 Type=simple
-# Boot-race fix: BMC starts in Standard mode and may assert before smfc runs.
-# Set FULL mode, clear SEL, wait for BMC to settle, then force both zones to 20%
-# BEFORE smfc starts — this eliminates the window where BMC can override.
+# Set FULL mode and clear SEL before smfc starts (best-effort, BMC may ignore during settle)
 ExecStartPre=/usr/bin/ipmitool raw 0x30 0x45 0x01 0x01
 ExecStartPre=/usr/bin/ipmitool sel clear
-ExecStartPre=/bin/sleep 5
-ExecStartPre=/usr/bin/ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x14
-ExecStartPre=/usr/bin/ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x14
 ExecStart=/usr/local/bin/smfc -c /etc/smfc/smfc.conf -l 3
 Restart=on-failure
 RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+    # Create post-boot convergence service — retries until BMC actually honors duty cycles
+    cat > /usr/local/bin/smfc-converge << 'CONVEOF'
+#!/bin/bash
+# Post-boot fan convergence: BMC ignores duty cycle commands for ~90-120s after boot.
+# This script retries until read-back confirms the target level, or times out.
+TARGET_HEX="14"  # 20% duty
+DEADLINE=300     # 5 minute timeout
+INTERVAL=10      # seconds between attempts
+
+elapsed=0
+attempt=0
+
+while (( elapsed < DEADLINE )); do
+    attempt=$((attempt + 1))
+
+    # Ensure FULL mode
+    ipmitool raw 0x30 0x45 0x01 0x01 >/dev/null 2>&1
+    # Set both zones
+    ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x${TARGET_HEX} >/dev/null 2>&1
+    ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x${TARGET_HEX} >/dev/null 2>&1
+
+    sleep "$INTERVAL"
+
+    # Read back
+    z0=$(ipmitool raw 0x30 0x70 0x66 0x00 0x00 2>/dev/null | tr -d ' ')
+    z1=$(ipmitool raw 0x30 0x70 0x66 0x00 0x01 2>/dev/null | tr -d ' ')
+
+    if [[ "$z0" == "$TARGET_HEX" && "$z1" == "$TARGET_HEX" ]]; then
+        echo "Fan convergence achieved after ${elapsed}s (attempt $attempt): zone0=$z0 zone1=$z1"
+        exit 0
+    fi
+
+    elapsed=$((elapsed + INTERVAL))
+    echo "Attempt $attempt (${elapsed}s): zone0=$z0 zone1=$z1 — retrying..."
+done
+
+echo "ERROR: Fan convergence FAILED after ${DEADLINE}s. zone0=$z0 zone1=$z1 (target=$TARGET_HEX)"
+exit 1
+CONVEOF
+    chmod +x /usr/local/bin/smfc-converge
+
+    cat > /etc/systemd/system/smfc-converge.service << 'SVCEOF'
+[Unit]
+Description=Post-boot fan duty cycle convergence
+After=smfc.service
+Requires=smfc.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/smfc-converge
+TimeoutStartSec=360
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -1673,6 +1725,7 @@ SVCEOF
     systemctl daemon-reload
     systemctl stop smfc 2>/dev/null || true
     systemctl enable smfc
+    systemctl enable smfc-converge
     
     # Clear assertions and set FULL mode BEFORE starting smfc
     ipmitool raw 0x30 0x45 0x01 0x01
@@ -1684,8 +1737,9 @@ SVCEOF
     sleep 10
     if systemctl is-active --quiet smfc; then
         echo "  ✓ smfc running — fans now dynamically controlled by CPU temperature"
-        echo "    CPU 30°C → fans at 15%, CPU 60°C → fans at 100%"
+        echo "    CPU 30°C → fans at 20%, CPU 60°C → fans at 100%"
         echo "    Config: /etc/smfc/smfc.conf"
+        echo "  ✓ smfc-converge enabled — retries duty cycles until BMC settles after reboot"
     else
         echo "  ⚠ smfc not running — falling back to static fan control via rc.local"
         # Fallback: static fan control if smfc fails
