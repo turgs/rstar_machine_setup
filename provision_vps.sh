@@ -1665,57 +1665,66 @@ RestartSec=10
 WantedBy=multi-user.target
 SVCEOF
 
-    # Create post-boot convergence service — retries until BMC actually honors duty cycles
+    # Create post-boot convergence service — BMC cold reset is required after system reboot
     cat > /usr/local/bin/smfc-converge << 'CONVEOF'
 #!/bin/bash
-# Post-boot fan convergence: BMC ignores duty cycle commands for ~90-120s after boot.
-# This script retries until read-back confirms the target level, or times out.
+# Post-boot fan convergence for Supermicro X11SPL-F.
+# The BMC retains protective state across system reboots — only a BMC cold reset clears it.
+# After cold reset, FULL mode + duty cycle commands are honored immediately.
 TARGET_HEX="14"  # 20% duty
-DEADLINE=300     # 5 minute timeout
-INTERVAL=10      # seconds between attempts
+BMC_SETTLE=90    # seconds for BMC to reinitialize after cold reset
 
-elapsed=0
-attempt=0
+echo "Issuing BMC cold reset..."
+ipmitool mc reset cold >/dev/null 2>&1
 
-while (( elapsed < DEADLINE )); do
-    attempt=$((attempt + 1))
+echo "Waiting ${BMC_SETTLE}s for BMC to reinitialize..."
+sleep "$BMC_SETTLE"
 
-    # Ensure FULL mode
+echo "Setting FULL fan mode..."
+ipmitool raw 0x30 0x45 0x01 0x01 >/dev/null 2>&1
+sleep 2
+
+echo "Setting zone 0 and zone 1 to ${TARGET_HEX}% duty..."
+ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x${TARGET_HEX} >/dev/null 2>&1
+ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x${TARGET_HEX} >/dev/null 2>&1
+sleep 10
+
+# Verify
+z0=$(ipmitool raw 0x30 0x70 0x66 0x00 0x00 2>/dev/null | sed 's/ //g')
+z1=$(ipmitool raw 0x30 0x70 0x66 0x00 0x01 2>/dev/null | sed 's/ //g')
+
+if [[ "$z0" == "$TARGET_HEX" && "$z1" == "$TARGET_HEX" ]]; then
+    echo "Fan convergence OK: zone0=$z0 zone1=$z1"
+    exit 0
+else
+    echo "WARNING: zone0=$z0 zone1=$z1 (expected $TARGET_HEX) — retrying once..."
+    sleep 10
     ipmitool raw 0x30 0x45 0x01 0x01 >/dev/null 2>&1
-    # Set both zones
     ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x${TARGET_HEX} >/dev/null 2>&1
     ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x${TARGET_HEX} >/dev/null 2>&1
-
-    sleep "$INTERVAL"
-
-    # Read back
+    sleep 10
     z0=$(ipmitool raw 0x30 0x70 0x66 0x00 0x00 2>/dev/null | sed 's/ //g')
     z1=$(ipmitool raw 0x30 0x70 0x66 0x00 0x01 2>/dev/null | sed 's/ //g')
-
     if [[ "$z0" == "$TARGET_HEX" && "$z1" == "$TARGET_HEX" ]]; then
-        echo "Fan convergence achieved after ${elapsed}s (attempt $attempt): zone0=$z0 zone1=$z1"
+        echo "Fan convergence OK on retry: zone0=$z0 zone1=$z1"
         exit 0
     fi
-
-    elapsed=$((elapsed + INTERVAL))
-    echo "Attempt $attempt (${elapsed}s): zone0=$z0 zone1=$z1 — retrying..."
-done
-
-echo "ERROR: Fan convergence FAILED after ${DEADLINE}s. zone0=$z0 zone1=$z1 (target=$TARGET_HEX)"
-exit 1
+    echo "ERROR: Fan convergence FAILED. zone0=$z0 zone1=$z1"
+    exit 1
+fi
 CONVEOF
     chmod +x /usr/local/bin/smfc-converge
 
     cat > /etc/systemd/system/smfc-converge.service << 'SVCEOF'
 [Unit]
-Description=Post-boot fan duty cycle convergence
+Description=Post-boot fan duty cycle convergence (BMC cold reset)
 After=smfc.service
 Requires=smfc.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/smfc-converge
-TimeoutStartSec=360
+TimeoutStartSec=180
 RemainAfterExit=yes
 
 [Install]
