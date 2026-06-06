@@ -52,6 +52,7 @@ That's it! Your server will be fully configured and reboot automatically.
 - ✅ **UFW Firewall**
   - Ports 33003 (SSH), 80 (HTTP), 443 (HTTPS)
   - With `--tunnel-token`: only port 33003 (SSH) — 80/443 stay closed
+  - Close SSH port manually after confirming tunnel SSH works
   - Default deny incoming
   - Default allow outgoing
 
@@ -264,9 +265,10 @@ Until you add hostnames in Cloudflare, no traffic reaches the server. This means
 
 | Without token | With token |
 |---|---|
-| UFW opens 80, 443, 33003 | UFW opens only 33003 |
+| UFW opens 80, 443, 33003 | UFW opens only 33003 (close manually after tunnel SSH confirmed) |
 | No cloudflared installed | cloudflared installed + running as systemd service |
 | Direct HTTP/HTTPS to server | All web traffic via Cloudflare Tunnel |
+| SSH via direct port | SSH via tunnel (add `ssh.receptionstar.com` hostname) |
 
 ### Verify tunnel status
 
@@ -282,9 +284,29 @@ journalctl -u cloudflared-tunnel -f
 
 ## 🎯 Kamal 2 Integration
 
-### Configure Kamal for Custom SSH Port
+### SSH via Cloudflare Tunnel (recommended)
 
-Edit `.kamal/deploy.yml`:
+With `--tunnel-token`, Kamal connects via the tunnel — no open SSH port needed:
+
+```yaml
+# config/deploy.yml
+ssh:
+  user: deploy
+  proxy: "cloudflared access ssh --hostname ssh.receptionstar.com"
+
+servers:
+  web:
+    hosts:
+      - ssh.receptionstar.com
+```
+
+**Post-provision steps:**
+1. Add DNS: CNAME `ssh` → `<tunnel-uuid>.cfargotunnel.com` (proxied)
+2. Add tunnel Public Hostname: `ssh.receptionstar.com → ssh://localhost:22`
+3. Test: `kamal exec --interactive -- whoami`
+4. Close SSH port: `sudo ufw delete allow 33003/tcp`
+
+### Direct SSH (fallback / initial setup)
 
 ```yaml
 ssh:
