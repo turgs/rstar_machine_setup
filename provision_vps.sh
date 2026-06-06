@@ -1689,8 +1689,8 @@ while (( elapsed < DEADLINE )); do
     sleep "$INTERVAL"
 
     # Read back
-    z0=$(ipmitool raw 0x30 0x70 0x66 0x00 0x00 2>/dev/null | tr -d ' ')
-    z1=$(ipmitool raw 0x30 0x70 0x66 0x00 0x01 2>/dev/null | tr -d ' ')
+    z0=$(ipmitool raw 0x30 0x70 0x66 0x00 0x00 2>/dev/null | sed 's/ //g')
+    z1=$(ipmitool raw 0x30 0x70 0x66 0x00 0x01 2>/dev/null | sed 's/ //g')
 
     if [[ "$z0" == "$TARGET_HEX" && "$z1" == "$TARGET_HEX" ]]; then
         echo "Fan convergence achieved after ${elapsed}s (attempt $attempt): zone0=$z0 zone1=$z1"
