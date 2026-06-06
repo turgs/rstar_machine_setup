@@ -1361,6 +1361,80 @@ EOF
     mark_complete "configure_sysctl"
 }
 
+configure_dns() {
+    if is_complete "configure_dns"; then
+        echo "⚠ DNS already configured, skipping"
+        return
+    fi
+    
+    log "Configuring DNS (Cloudflare malware-blocking)"
+    
+    # Use Cloudflare 1.1.1.2 "for Families" — blocks known malware/C2/phishing domains
+    # Prevents compromised processes from phoning home to command-and-control servers
+    # Falls back to router DNS if Cloudflare is unreachable
+    
+    # resolv.conf.head is prepended by dhcpcd on DHCP renew (persists across reboots)
+    if [[ -d /etc/dhcpcd.conf ]] || command -v dhcpcd &>/dev/null; then
+        cat > /etc/resolv.conf.head << 'EOF'
+# Cloudflare DNS with malware blocking (1.1.1.2 for Families)
+nameserver 1.1.1.2
+nameserver 1.0.0.2
+EOF
+    fi
+    
+    # Also set resolv.conf directly for immediate effect
+    cat > /etc/resolv.conf << 'EOF'
+# Cloudflare DNS with malware blocking
+nameserver 1.1.1.2
+nameserver 1.0.0.2
+EOF
+    
+    # Verify DNS works
+    if command -v dig &>/dev/null; then
+        if dig +short +time=3 cloudflare.com @1.1.1.2 >/dev/null 2>&1; then
+            echo "  ✓ Cloudflare DNS responding"
+        else
+            echo "  ⚠ Cloudflare DNS not responding — adding router fallback"
+            echo "nameserver 192.168.1.1" >> /etc/resolv.conf
+        fi
+    fi
+    
+    echo "✓ DNS configured: 1.1.1.2 / 1.0.0.2 (malware blocking)"
+    mark_complete "configure_dns"
+}
+
+install_smartmontools() {
+    if is_complete "install_smartmontools"; then
+        echo "⚠ smartmontools already installed, skipping"
+        return
+    fi
+    
+    log "Installing smartmontools (disk health monitoring)"
+    
+    apt-get install -y -qq smartmontools
+    
+    # Enable smartd daemon for continuous monitoring
+    systemctl enable --now smartmontools 2>/dev/null || systemctl enable --now smartd 2>/dev/null || true
+    
+    # Show initial health status
+    local nvme_dev=""
+    if [[ -b /dev/nvme0n1 ]]; then
+        nvme_dev="/dev/nvme0n1"
+    elif [[ -b /dev/sda ]]; then
+        nvme_dev="/dev/sda"
+    fi
+    
+    if [[ -n "$nvme_dev" ]]; then
+        local health
+        health=$(smartctl -H "$nvme_dev" 2>/dev/null | grep -i "overall" || echo "unknown")
+        echo "  Drive: $nvme_dev — $health"
+    fi
+    
+    echo "✓ smartmontools installed and monitoring"
+    echo "  Check health: smartctl -a /dev/nvme0n1"
+    mark_complete "install_smartmontools"
+}
+
 setup_ubuntu_livepatch() {
     if is_complete "setup_ubuntu_livepatch"; then
         echo "⚠ Ubuntu Livepatch already configured, skipping"
@@ -2006,6 +2080,8 @@ EOF
     install_docker
     install_cloudflared
     configure_sysctl
+    configure_dns
+    install_smartmontools
     setup_log_rotation
     setup_ubuntu_livepatch
     setup_canary_token
