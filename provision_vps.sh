@@ -2080,10 +2080,24 @@ EOF
     cat > /usr/local/bin/rstar-heartbeat << 'SCRIPT'
 #!/bin/bash
 source /etc/rstar-recovery.env
-curl -sf -o /dev/null --max-time 5 \
-  -X POST "$WORKER_URL/heartbeat" \
-  -H "Authorization: Bearer $RECOVERY_SECRET" \
-  || true
+
+# Send heartbeat — response tells us the current state
+RESPONSE=$(curl -sf --max-time 5 -X POST "$WORKER_URL/heartbeat" \
+  -H "Authorization: Bearer $RECOVERY_SECRET" 2>/dev/null) || exit 0
+
+STATE=$(echo "$RESPONSE" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+
+# If VPS is active, tell Worker we are back
+if [ "$STATE" = "active" ]; then
+  curl -sf --max-time 5 -X POST "$WORKER_URL/tower-ready" \
+    -H "Authorization: Bearer $RECOVERY_SECRET" || true
+fi
+
+# If VPS has quiesced, confirm recovery (destroys VPS, resets to idle)
+if [ "$STATE" = "quiesced" ]; then
+  curl -sf --max-time 5 -X POST "$WORKER_URL/recovered" \
+    -H "Authorization: Bearer $RECOVERY_SECRET" || true
+fi
 SCRIPT
     chmod +x /usr/local/bin/rstar-heartbeat
 
