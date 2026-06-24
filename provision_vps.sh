@@ -81,6 +81,8 @@ CANARYTOKEN_URL="${CANARYTOKEN_URL:-}"
 UBUNTU_LIVEPATCH_TOKEN="${UBUNTU_LIVEPATCH_TOKEN:-}"
 LAN_IP="${LAN_IP:-}"
 TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
+RECOVERY_SECRET="${RECOVERY_SECRET:-}"
+WORKER_URL="${WORKER_URL:-https://rstar-failover.timburgan.workers.dev}"
 
 # Docker
 DOCKER_VERSION="${DOCKER_VERSION:-latest}"
@@ -137,6 +139,14 @@ parse_args() {
                 ;;
             --tunnel-token=*)
                 TUNNEL_TOKEN="${1#*=}"
+                shift
+                ;;
+            --recovery-secret=*)
+                RECOVERY_SECRET="${1#*=}"
+                shift
+                ;;
+            --worker-url=*)
+                WORKER_URL="${1#*=}"
                 shift
                 ;;
             --no-reboot)
@@ -2025,6 +2035,88 @@ EOF
 }
 
 #==============================================================================
+# FAILOVER HEARTBEAT + RECOVERY SERVICE
+#==============================================================================
+
+install_failover_services() {
+    if is_complete "install_failover_services"; then
+        echo "⚠ Failover services already installed, skipping"
+        return
+    fi
+    
+    log "Installing Failover Heartbeat + Recovery Services"
+    
+    if [[ -z "$RECOVERY_SECRET" ]]; then
+        echo "⚠ RECOVERY_SECRET not set — skipping failover services"
+        echo "  Set RECOVERY_SECRET env var and re-run to install"
+        return
+    fi
+    
+    # Create env file for recovery/heartbeat scripts
+    cat > /etc/rstar-recovery.env << EOF
+WORKER_URL=$WORKER_URL
+RECOVERY_SECRET=$RECOVERY_SECRET
+EOF
+    chmod 600 /etc/rstar-recovery.env
+    
+    # Heartbeat service (sends POST to Worker every 30s)
+    cat > /etc/systemd/system/rstar-heartbeat.service << 'EOF'
+[Unit]
+Description=RStar failover heartbeat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/deploy/ReceptionStar/bin/failover-heartbeat
+EnvironmentFile=/etc/rstar-recovery.env
+EOF
+
+    # Heartbeat timer (every 30s)
+    cat > /etc/systemd/system/rstar-heartbeat.timer << 'EOF'
+[Unit]
+Description=RStar heartbeat timer (every 30s)
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    # Recovery service (runs on boot BEFORE cloudflared, coordinates VPS quiesce)
+    cat > /etc/systemd/system/rstar-recovery.service << 'EOF'
+[Unit]
+Description=RStar failover recovery (gates cloudflared)
+Before=cloudflared-tunnel.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/deploy/ReceptionStar/bin/failover-recovery
+EnvironmentFile=/etc/rstar-recovery.env
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable rstar-heartbeat.timer
+    systemctl enable rstar-recovery.service
+    # Don't start heartbeat yet — app isn't deployed. Timer starts on next boot.
+    
+    echo "✓ Failover services installed:"
+    echo "  - rstar-heartbeat.timer (30s heartbeat to Worker)"
+    echo "  - rstar-recovery.service (gates cloudflared on boot)"
+    echo "  - /etc/rstar-recovery.env (secrets)"
+    
+    mark_complete "install_failover_services"
+}
+
+#==============================================================================
 # MAIN EXECUTION
 #==============================================================================
 
@@ -2079,6 +2171,7 @@ EOF
     create_swap
     install_docker
     install_cloudflared
+    install_failover_services
     configure_sysctl
     configure_dns
     install_smartmontools
