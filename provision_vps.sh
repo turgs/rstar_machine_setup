@@ -2076,71 +2076,56 @@ RECOVERY_SECRET=$RECOVERY_SECRET
 EOF
     chmod 600 /etc/rstar-recovery.env
     
-    # Heartbeat script (sends POST to Worker)
+    # Heartbeat script — manages cloudflared to prevent split-brain
+    # cloudflared is DISABLED from auto-start; this script starts/stops it.
     cat > /usr/local/bin/rstar-heartbeat << 'SCRIPT'
 #!/bin/bash
 source /etc/rstar-recovery.env
 
-# Send heartbeat — response tells us the current state
-RESPONSE=$(curl -sf --max-time 5 -X POST "$WORKER_URL/heartbeat" \
-  -H "Authorization: Bearer $RECOVERY_SECRET" 2>/dev/null) || exit 0
-
+# Query failover state from Worker
+RESPONSE=$(curl -sf --max-time 5 "$WORKER_URL/state" 2>/dev/null) || exit 0
 STATE=$(echo "$RESPONSE" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
 
-# If VPS is active, tell Worker we are back
-if [ "$STATE" = "active" ]; then
-  curl -sf --max-time 5 -X POST "$WORKER_URL/tower-ready" \
-    -H "Authorization: Bearer $RECOVERY_SECRET" || true
-fi
+CLOUDFLARED_RUNNING=$(systemctl is-active cloudflared-tunnel 2>/dev/null)
 
-# If VPS has quiesced, confirm recovery (destroys VPS, resets to idle)
-if [ "$STATE" = "quiesced" ]; then
-  curl -sf --max-time 5 -X POST "$WORKER_URL/recovered" \
-    -H "Authorization: Bearer $RECOVERY_SECRET" || true
-fi
+case "$STATE" in
+  idle)
+    # Normal operation — ensure cloudflared is running
+    if [ "$CLOUDFLARED_RUNNING" != "active" ]; then
+      systemctl start cloudflared-tunnel
+      sleep 3
+    fi
+    # Send heartbeat (registers tower as alive)
+    curl -sf --max-time 5 -o /dev/null -X POST "$WORKER_URL/heartbeat" \
+      -H "Authorization: Bearer $RECOVERY_SECRET" || true
+    ;;
+
+  active|provisioning)
+    # VPS is serving — DO NOT start cloudflared (avoid split-brain)
+    # Tell Worker tower is ready to take over
+    if [ "$STATE" = "active" ]; then
+      curl -sf --max-time 5 -X POST "$WORKER_URL/tower-ready" \
+        -H "Authorization: Bearer $RECOVERY_SECRET" || true
+    fi
+    ;;
+
+  recovering)
+    # Waiting for VPS to quiesce — keep cloudflared stopped
+    ;;
+
+  quiesced)
+    # VPS has stopped its cloudflared — safe to start ours
+    if [ "$CLOUDFLARED_RUNNING" != "active" ]; then
+      systemctl start cloudflared-tunnel
+      sleep 5  # Give cloudflared time to establish tunnel
+    fi
+    # Confirm recovery (Worker will destroy VPS)
+    curl -sf --max-time 5 -X POST "$WORKER_URL/recovered" \
+      -H "Authorization: Bearer $RECOVERY_SECRET" || true
+    ;;
+esac
 SCRIPT
     chmod +x /usr/local/bin/rstar-heartbeat
-
-    # Recovery script (gates cloudflared on boot)
-    cat > /usr/local/bin/rstar-recovery << 'SCRIPT'
-#!/bin/bash
-set -euo pipefail
-source /etc/rstar-recovery.env
-
-STATE=$(curl -sf --max-time 10 "$WORKER_URL/state" 2>/dev/null | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
-
-if [ "$STATE" = "idle" ] || [ -z "$STATE" ]; then
-  echo "[recovery] State is '${STATE:-unreachable}'. Normal boot."
-  exit 0
-fi
-
-if [ "$STATE" != "active" ]; then
-  echo "[recovery] State is '$STATE'. No recovery needed."
-  exit 0
-fi
-
-echo "[recovery] State is 'active' — failover VPS is serving. Starting recovery..."
-curl -sf -X POST "$WORKER_URL/tower-ready" -H "Authorization: Bearer $RECOVERY_SECRET" || {
-  echo "[recovery] Failed to signal tower-ready. Allowing cloudflared to start."
-  exit 0
-}
-
-for i in $(seq 1 24); do
-  sleep 10
-  STATE=$(curl -sf "$WORKER_URL/state" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
-  if [ "$STATE" = "quiesced" ]; then
-    echo "[recovery] VPS quiesced. Restoring data..."
-    # TODO: Litestream restore + integrity checks when implemented
-    curl -sf -X POST "$WORKER_URL/recovered" -H "Authorization: Bearer $RECOVERY_SECRET"
-    echo "[recovery] Recovery complete. Cloudflared will start."
-    exit 0
-  fi
-done
-
-echo "[recovery] Timeout waiting for quiesce. Allowing cloudflared to start."
-exit 0
-SCRIPT
-    chmod +x /usr/local/bin/rstar-recovery
 
     # Heartbeat service
     cat > /etc/systemd/system/rstar-heartbeat.service << 'EOF'
@@ -2154,47 +2139,32 @@ Type=oneshot
 ExecStart=/usr/local/bin/rstar-heartbeat
 EOF
 
-    # Heartbeat timer (every 30s)
+    # Heartbeat timer (every 10s — fast recovery handoff)
     cat > /etc/systemd/system/rstar-heartbeat.timer << 'EOF'
 [Unit]
-Description=RStar heartbeat timer (every 30s)
+Description=RStar heartbeat timer (every 10s)
 
 [Timer]
-OnBootSec=30
-OnUnitActiveSec=30
+OnBootSec=10
+OnUnitActiveSec=10
 
 [Install]
 WantedBy=timers.target
 EOF
 
-    # Recovery service (runs on boot BEFORE cloudflared, coordinates VPS quiesce)
-    cat > /etc/systemd/system/rstar-recovery.service << 'EOF'
-[Unit]
-Description=RStar failover recovery (gates cloudflared)
-Before=cloudflared-tunnel.service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/rstar-recovery
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
+    # Disable cloudflared auto-start — heartbeat manages it to prevent split-brain
+    systemctl disable cloudflared-tunnel 2>/dev/null || true
 
     systemctl daemon-reload
     systemctl enable rstar-heartbeat.timer
-    systemctl enable rstar-recovery.service
     # Don't start heartbeat yet — app isn't deployed. Timer starts on next boot.
     
     echo "✓ Failover services installed:"
-    echo "  - rstar-heartbeat.timer (30s heartbeat to Worker)"
-    echo "  - rstar-recovery.service (gates cloudflared on boot)"
+    echo "  - rstar-heartbeat.timer (10s — manages cloudflared + recovery)"
     echo "  - /usr/local/bin/rstar-heartbeat"
-    echo "  - /usr/local/bin/rstar-recovery"
     echo "  - /etc/rstar-recovery.env (secrets)"
+    echo "  NOTE: cloudflared-tunnel is DISABLED from auto-start."
+    echo "  The heartbeat script starts it when failover state is idle."
     
     mark_complete "install_failover_services"
 }
