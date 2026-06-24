@@ -1300,10 +1300,12 @@ Wants=network-online.target
 [Service]
 Type=notify
 ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN
-Restart=on-failure
+Restart=always
 RestartSec=5
 TimeoutStartSec=0
 LimitNOFILE=65536
+# Watchdog: restart if cloudflared stops notifying systemd (stuck process)
+WatchdogSec=60
 
 [Install]
 WantedBy=multi-user.target
