@@ -1505,6 +1505,23 @@ setup_log_rotation() {
     
     log "Configuring Log Rotation"
     
+    # App log directory — must be writable by container user (uid 1000)
+    mkdir -p /var/log/receptionstar
+    chown 1000:1000 /var/log/receptionstar
+    
+    cat > /etc/logrotate.d/receptionstar << EOF
+/var/log/receptionstar/production.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su $DEPLOY_USER $DEPLOY_USER
+}
+EOF
+
     cat > /etc/logrotate.d/custom-security << EOF
 /var/log/ufw.log {
     weekly
