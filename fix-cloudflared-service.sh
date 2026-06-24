@@ -4,7 +4,7 @@ set -euo pipefail
 # One-off fix: harden cloudflared-tunnel.service on existing servers.
 # Changes:
 #   - Restart=on-failure → Restart=always (survives clean exits too)
-#   - Add WatchdogSec=60 (restarts if cloudflared gets stuck without crashing)
+#   - Remove WatchdogSec if present (cloudflared doesn't support sd_notify)
 #
 # Run as root on the tower:
 #   bash fix-cloudflared-service.sh
@@ -23,12 +23,12 @@ echo
 # Apply fixes
 sed -i 's/^Restart=on-failure/Restart=always/' "$SERVICE_FILE"
 
-if ! grep -q "WatchdogSec" "$SERVICE_FILE"; then
-    sed -i '/^LimitNOFILE=/a WatchdogSec=60' "$SERVICE_FILE"
-fi
+# Remove WatchdogSec — cloudflared doesn't support sd_notify WATCHDOG=1,
+# so systemd kills it every WatchdogSec interval thinking it's stuck.
+sed -i '/^WatchdogSec=/d' "$SERVICE_FILE"
 
 echo "Updated service config:"
-grep -E "Restart=|WatchdogSec=" "$SERVICE_FILE"
+grep -E "Restart=|WatchdogSec=" "$SERVICE_FILE" || echo "  (no WatchdogSec — correct)"
 echo
 
 systemctl daemon-reload
