@@ -2059,7 +2059,59 @@ RECOVERY_SECRET=$RECOVERY_SECRET
 EOF
     chmod 600 /etc/rstar-recovery.env
     
-    # Heartbeat service (sends POST to Worker every 30s)
+    # Heartbeat script (sends POST to Worker)
+    cat > /usr/local/bin/rstar-heartbeat << 'SCRIPT'
+#!/bin/bash
+source /etc/rstar-recovery.env
+curl -sf -o /dev/null --max-time 5 \
+  -X POST "$WORKER_URL/heartbeat" \
+  -H "Authorization: Bearer $RECOVERY_SECRET" \
+  || true
+SCRIPT
+    chmod +x /usr/local/bin/rstar-heartbeat
+
+    # Recovery script (gates cloudflared on boot)
+    cat > /usr/local/bin/rstar-recovery << 'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+source /etc/rstar-recovery.env
+
+STATE=$(curl -sf --max-time 10 "$WORKER_URL/state" 2>/dev/null | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
+
+if [ "$STATE" = "idle" ] || [ -z "$STATE" ]; then
+  echo "[recovery] State is '${STATE:-unreachable}'. Normal boot."
+  exit 0
+fi
+
+if [ "$STATE" != "active" ]; then
+  echo "[recovery] State is '$STATE'. No recovery needed."
+  exit 0
+fi
+
+echo "[recovery] State is 'active' — failover VPS is serving. Starting recovery..."
+curl -sf -X POST "$WORKER_URL/tower-ready" -H "Authorization: Bearer $RECOVERY_SECRET" || {
+  echo "[recovery] Failed to signal tower-ready. Allowing cloudflared to start."
+  exit 0
+}
+
+for i in $(seq 1 24); do
+  sleep 10
+  STATE=$(curl -sf "$WORKER_URL/state" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
+  if [ "$STATE" = "quiesced" ]; then
+    echo "[recovery] VPS quiesced. Restoring data..."
+    # TODO: Litestream restore + integrity checks when implemented
+    curl -sf -X POST "$WORKER_URL/recovered" -H "Authorization: Bearer $RECOVERY_SECRET"
+    echo "[recovery] Recovery complete. Cloudflared will start."
+    exit 0
+  fi
+done
+
+echo "[recovery] Timeout waiting for quiesce. Allowing cloudflared to start."
+exit 0
+SCRIPT
+    chmod +x /usr/local/bin/rstar-recovery
+
+    # Heartbeat service
     cat > /etc/systemd/system/rstar-heartbeat.service << 'EOF'
 [Unit]
 Description=RStar failover heartbeat
@@ -2068,8 +2120,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/home/deploy/ReceptionStar/bin/failover-heartbeat
-EnvironmentFile=/etc/rstar-recovery.env
+ExecStart=/usr/local/bin/rstar-heartbeat
 EOF
 
     # Heartbeat timer (every 30s)
@@ -2095,8 +2146,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/home/deploy/ReceptionStar/bin/failover-recovery
-EnvironmentFile=/etc/rstar-recovery.env
+ExecStart=/usr/local/bin/rstar-recovery
 RemainAfterExit=yes
 
 [Install]
@@ -2111,6 +2161,8 @@ EOF
     echo "✓ Failover services installed:"
     echo "  - rstar-heartbeat.timer (30s heartbeat to Worker)"
     echo "  - rstar-recovery.service (gates cloudflared on boot)"
+    echo "  - /usr/local/bin/rstar-heartbeat"
+    echo "  - /usr/local/bin/rstar-recovery"
     echo "  - /etc/rstar-recovery.env (secrets)"
     
     mark_complete "install_failover_services"
