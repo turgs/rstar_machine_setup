@@ -1673,6 +1673,32 @@ configure_supermicro_fans() {
         apt-get install -y ipmitool
     fi
     
+    # Install hardware event logging (rasdaemon for MCE/ECC, ipmievd for BMC→journal)
+    echo "  Installing hardware event logging..."
+    apt-get install -y -qq rasdaemon 2>/dev/null || true
+    systemctl enable rasdaemon 2>/dev/null || true
+    systemctl start rasdaemon 2>/dev/null || true
+    
+    # ipmievd — forwards BMC/SEL events to systemd journal in real-time
+    cat > /etc/systemd/system/ipmievd.service << 'IPMIEVDEOF'
+[Unit]
+Description=IPMI Event Daemon (forwards BMC events to journal)
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/sbin/ipmievd sel daemon
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+IPMIEVDEOF
+    systemctl daemon-reload
+    systemctl enable ipmievd
+    systemctl start ipmievd 2>/dev/null || true
+    echo "  ✓ rasdaemon + ipmievd installed (hardware events → journal)"
+    
     # Lower alarm thresholds for connected tower fans
     for fan in FAN1 FANA; do
         ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
@@ -1690,7 +1716,7 @@ configure_supermicro_fans() {
     
     # Re-establish FULL mode after BMC reset
     ipmitool raw 0x30 0x45 0x01 0x01
-    ipmitool sel clear 2>/dev/null || true
+    # NOTE: Do NOT clear SEL here — preserves pre-reboot hardware events for diagnostics
     sleep 3
     
     # Quiet fans immediately while smfc installs
@@ -1755,9 +1781,8 @@ After=network.target
 
 [Service]
 Type=simple
-# Set FULL mode and clear SEL before smfc starts (best-effort, BMC may ignore during settle)
+# Set FULL mode before smfc starts (best-effort, BMC may ignore during settle)
 ExecStartPre=/usr/bin/ipmitool raw 0x30 0x45 0x01 0x01
-ExecStartPre=/usr/bin/ipmitool sel clear
 ExecStart=/usr/local/bin/smfc -c /etc/smfc/smfc.conf -l 3
 Restart=on-failure
 RestartSec=10
@@ -1837,9 +1862,8 @@ SVCEOF
     systemctl enable smfc
     systemctl enable smfc-converge
     
-    # Clear assertions and set FULL mode BEFORE starting smfc
+    # Set FULL mode BEFORE starting smfc (do NOT clear SEL — preserve for diagnostics)
     ipmitool raw 0x30 0x45 0x01 0x01
-    ipmitool sel clear 2>/dev/null || true
     sleep 2
     
     systemctl start smfc 2>/dev/null || echo "  ⚠ smfc failed to start — check: journalctl -u smfc"
@@ -1858,7 +1882,6 @@ SVCEOF
 # Supermicro fan control fallback — applied by provision_vps.sh
 sleep 30
 ipmitool raw 0x30 0x45 0x01 0x01
-ipmitool sel clear
 for fan in FAN1 FANA; do
     ipmitool sensor thresh "$fan" lower 0 100 200 2>/dev/null || true
 done
