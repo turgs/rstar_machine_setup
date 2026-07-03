@@ -1324,6 +1324,14 @@ EOF
         echo "  Logs: journalctl -u cloudflared-tunnel -f"
     fi
     
+    # Allow Cloudflare QUIC return traffic through UFW.
+    # cloudflared uses QUIC (UDP) to Cloudflare edge. Return packets can be
+    # marked INVALID by conntrack (UDP timeout) and dropped by UFW's before.rules.
+    # Without this, cloudflared connections die intermittently.
+    ufw allow in from 172.64.0.0/13 proto udp comment "Cloudflare QUIC tunnel return" 2>/dev/null || true
+    ufw allow in from 198.41.192.0/24 proto udp comment "Cloudflare QUIC tunnel return" 2>/dev/null || true
+    ufw allow in from 198.41.200.0/24 proto udp comment "Cloudflare QUIC tunnel return" 2>/dev/null || true
+    
     mark_complete "install_cloudflared"
 }
 
